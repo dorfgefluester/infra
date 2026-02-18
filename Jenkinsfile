@@ -1,3 +1,33 @@
+// Helper function to run npm commands (native or containerized)
+def runNpm(command) {
+    if (env.USE_NODE_CONTAINER == 'true') {
+        sh """
+            ${CONTAINER_CMD} run --rm \
+                -v \${WORKSPACE}:/workspace:rw \
+                -w /workspace \
+                ${NODE_CONTAINER_IMAGE} \
+                npm ${command}
+        """
+    } else {
+        sh "npm ${command}"
+    }
+}
+
+// Helper function to run node commands (native or containerized)
+def runNode(command) {
+    if (env.USE_NODE_CONTAINER == 'true') {
+        sh """
+            ${CONTAINER_CMD} run --rm \
+                -v \${WORKSPACE}:/workspace:rw \
+                -w /workspace \
+                ${NODE_CONTAINER_IMAGE} \
+                node ${command}
+        """
+    } else {
+        sh "node ${command}"
+    }
+}
+
 pipeline {
     agent any
 
@@ -71,31 +101,210 @@ pipeline {
             }
         }
 
-        stage('Setup') {
+        stage('Validate Dependencies') {
             steps {
-                echo '🔧 Setting up environment...'
+                echo '🔍 Checking required dependencies...'
 
-                // Create report directories
-                sh """
-                    mkdir -p ${DEPENDENCY_CHECK_DIR}
-                    mkdir -p ${TRIVY_DIR}
-                    mkdir -p ${SEMGREP_DIR}
-                """
+                script {
+                    def missingTools = []
+                    def installedTools = []
 
-                // Display environment info
-                sh """
-                    echo "📊 Build Information:"
-                    echo "  Project: ${PROJECT_NAME}"
-                    echo "  Version: ${VERSION}"
-                    echo "  Build: #${BUILD_NUMBER}"
-                    echo "  Tag: ${BUILD_TAG}"
-                    echo "  Image: ${FULL_IMAGE_NAME}"
-                    echo "  Node: \$(node --version)"
-                    echo "  npm: \$(npm --version)"
-                    echo "  ${CONTAINER_CMD}: \$(${CONTAINER_CMD} --version | head -n1)"
-                """
+                    // Check for required system tools
+                    def tools = [
+                        'git': 'git --version',
+                        'jq': 'jq --version',
+                        'curl': 'curl --version',
+                        "${CONTAINER_CMD}": "${CONTAINER_CMD} --version"
+                    ]
 
-                echo '✅ Environment ready'
+                    tools.each { name, command ->
+                        def result = sh(script: "${command} > /dev/null 2>&1", returnStatus: true)
+                        if (result == 0) {
+                            def version = sh(script: "${command} 2>&1 | head -1", returnStdout: true).trim()
+                            installedTools << "✅ ${name}: ${version}"
+                        } else {
+                            missingTools << name
+                        }
+                    }
+
+                    // Display installed tools
+                    echo "Installed tools:"
+                    installedTools.each { echo "  ${it}" }
+
+                    // Handle missing tools
+                    if (missingTools.size() > 0) {
+                        echo "\n⚠️ Missing tools detected: ${missingTools.join(', ')}"
+                        echo "Attempting to install or provide alternatives...\n"
+
+                        // Auto-install jq if missing
+                        if (missingTools.contains('jq')) {
+                            echo "Installing jq..."
+                            def jqInstallResult = sh(
+                                script: '''
+                                    if command -v apt-get > /dev/null; then
+                                        sudo apt-get update && sudo apt-get install -y jq
+                                    elif command -v yum > /dev/null; then
+                                        sudo yum install -y jq
+                                    elif command -v dnf > /dev/null; then
+                                        sudo dnf install -y jq
+                                    elif command -v brew > /dev/null; then
+                                        brew install jq
+                                    else
+                                        # Fallback: download jq binary
+                                        wget -O /tmp/jq https://github.com/jqlang/jq/releases/download/jq-1.7.1/jq-linux-amd64
+                                        chmod +x /tmp/jq
+                                        sudo mv /tmp/jq /usr/local/bin/jq
+                                    fi
+                                ''',
+                                returnStatus: true
+                            )
+
+                            if (jqInstallResult == 0) {
+                                echo "✅ jq installed successfully"
+                                missingTools.remove('jq')
+                            }
+                        }
+
+                        // Check for curl, use wget as fallback
+                        if (missingTools.contains('curl')) {
+                            def wgetResult = sh(script: "wget --version > /dev/null 2>&1", returnStatus: true)
+                            if (wgetResult == 0) {
+                                echo "✅ wget available as curl alternative"
+                                missingTools.remove('curl')
+                            }
+                        }
+
+                        // If container runtime missing, fail with instructions
+                        if (missingTools.contains(CONTAINER_CMD)) {
+                            error("""
+❌ ${CONTAINER_CMD} is not installed!
+
+Installation instructions:
+
+For Podman:
+  # RHEL/CentOS/Fedora
+  sudo dnf install podman
+
+  # Ubuntu/Debian
+  sudo apt-get install podman
+
+  # macOS
+  brew install podman
+
+For Docker:
+  # Ubuntu/Debian
+  curl -fsSL https://get.docker.com | sh
+
+  # RHEL/CentOS
+  sudo yum install docker-ce
+
+Then restart Jenkins agent.
+Alternatively, set CONTAINER_CMD='docker' in Jenkinsfile if Docker is installed.
+                            """)
+                        }
+
+                        // Final check
+                        if (missingTools.size() > 0) {
+                            error("Still missing required tools: ${missingTools.join(', ')}")
+                        }
+                    }
+
+                    echo "✅ All required dependencies validated"
+                }
+            }
+        }
+
+        stage('Setup Node.js') {
+            steps {
+                echo '🔧 Setting up Node.js environment...'
+
+                script {
+                    // Check if Node.js is installed
+                    def nodeInstalled = sh(script: 'node --version > /dev/null 2>&1', returnStatus: true) == 0
+
+                    if (!nodeInstalled) {
+                        echo "⚠️ Node.js not found on agent, using containerized Node.js"
+
+                        // Use Node.js container for all npm commands
+                        env.USE_NODE_CONTAINER = 'true'
+                        env.NODE_CONTAINER_IMAGE = "docker.io/node:${NODE_VERSION}-alpine"
+
+                        // Pull Node.js image
+                        sh "${CONTAINER_CMD} pull ${NODE_CONTAINER_IMAGE}"
+
+                        // Test Node.js container
+                        sh """
+                            ${CONTAINER_CMD} run --rm ${NODE_CONTAINER_IMAGE} node --version
+                            ${CONTAINER_CMD} run --rm ${NODE_CONTAINER_IMAGE} npm --version
+                        """
+
+                        echo "✅ Containerized Node.js ${NODE_VERSION} ready"
+                    } else {
+                        env.USE_NODE_CONTAINER = 'false'
+
+                        def nodeVersion = sh(script: 'node --version', returnStdout: true).trim()
+                        def npmVersion = sh(script: 'npm --version', returnStdout: true).trim()
+
+                        echo "✅ Using native Node.js ${nodeVersion}"
+                        echo "✅ Using native npm ${npmVersion}"
+
+                        // Check if Node.js version matches requirement
+                        def installedMajor = nodeVersion.replaceAll(/v(\d+)\..*/, '$1').toInteger()
+                        def requiredMajor = NODE_VERSION.toInteger()
+
+                        if (installedMajor < requiredMajor) {
+                            echo "⚠️ Node.js ${nodeVersion} is older than recommended ${NODE_VERSION}"
+                            echo "Consider upgrading or pipeline will use containerized Node.js"
+
+                            env.USE_NODE_CONTAINER = 'true'
+                            env.NODE_CONTAINER_IMAGE = "docker.io/node:${NODE_VERSION}-alpine"
+                            sh "${CONTAINER_CMD} pull ${NODE_CONTAINER_IMAGE}"
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Setup Build Environment') {
+            steps {
+                echo '🔧 Setting up build environment...'
+
+                script {
+                    // Create report directories
+                    sh """
+                        mkdir -p ${DEPENDENCY_CHECK_DIR}
+                        mkdir -p ${TRIVY_DIR}
+                        mkdir -p ${SEMGREP_DIR}
+                    """
+
+                    // Pull required container images in parallel
+                    echo "📥 Pulling container images..."
+                    sh """
+                        ${CONTAINER_CMD} pull docker.io/owasp/dependency-check:latest &
+                        ${CONTAINER_CMD} pull docker.io/aquasec/trivy:latest &
+                        ${CONTAINER_CMD} pull docker.io/returntocorp/semgrep:latest &
+                        wait
+                    """
+
+                    // Display environment info
+                    def nodeCmd = env.USE_NODE_CONTAINER == 'true' ?
+                        "${CONTAINER_CMD} run --rm ${NODE_CONTAINER_IMAGE}" : ''
+
+                    sh """
+                        echo "📊 Build Information:"
+                        echo "  Project: ${PROJECT_NAME}"
+                        echo "  Version: ${VERSION}"
+                        echo "  Build: #${BUILD_NUMBER}"
+                        echo "  Tag: ${BUILD_TAG}"
+                        echo "  Image: ${FULL_IMAGE_NAME}"
+                        echo "  Node Mode: ${env.USE_NODE_CONTAINER == 'true' ? 'Container' : 'Native'}"
+                        ${nodeCmd} node --version | sed 's/^/  Node: /'
+                        ${nodeCmd} npm --version | sed 's/^/  npm: /'
+                        ${CONTAINER_CMD} --version | head -1 | sed 's/^/  ${CONTAINER_CMD}: /'
+                    """
+
+                    echo '✅ Environment ready'
+                }
             }
         }
 
@@ -104,16 +313,16 @@ pipeline {
                 echo '📦 Installing npm dependencies...'
 
                 script {
-                    // Use npm ci for clean install (faster in CI)
                     def startTime = System.currentTimeMillis()
 
-                    sh 'npm ci --prefer-offline --no-audit'
+                    // Install dependencies using helper function
+                    runNpm('ci --prefer-offline --no-audit')
 
                     def duration = (System.currentTimeMillis() - startTime) / 1000
                     echo "✅ Dependencies installed in ${duration}s"
 
                     // List outdated packages (informational)
-                    sh 'npm outdated || true'
+                    sh(script: "npm outdated || true", returnStatus: true)
                 }
             }
         }
@@ -196,14 +405,18 @@ pipeline {
                 stage('Validate Prototype') {
                     steps {
                         echo '🔍 Running prototype validation...'
-                        sh 'npm run validate'
+                        script {
+                            runNpm('run validate')
+                        }
                     }
                 }
 
                 stage('Validate Translations') {
                     steps {
                         echo '🌐 Running translation validation...'
-                        sh 'npm run validate-translations'
+                        script {
+                            runNpm('run validate-translations')
+                        }
                     }
                 }
             }
@@ -393,7 +606,9 @@ pipeline {
                 stage('Unit Tests') {
                     steps {
                         echo '🧪 Running Jest unit tests...'
-                        sh 'npm test -- --ci --coverage --maxWorkers=2'
+                        script {
+                            runNpm('test -- --ci --coverage --maxWorkers=2')
+                        }
                     }
                     post {
                         always {
@@ -417,7 +632,22 @@ pipeline {
                     }
                     steps {
                         echo '🎭 Running Playwright E2E tests...'
-                        sh 'npm run test:e2e'
+                        script {
+                            // E2E tests need Playwright browsers installed
+                            if (env.USE_NODE_CONTAINER == 'true') {
+                                echo '📦 Using Playwright container with pre-installed browsers'
+                                sh """
+                                    ${CONTAINER_CMD} run --rm \
+                                        -v \${WORKSPACE}:/workspace:rw \
+                                        -w /workspace \
+                                        --ipc=host \
+                                        docker.io/mcr.microsoft.com/playwright:v1.50.0-noble \
+                                        npm run test:e2e
+                                """
+                            } else {
+                                runNpm('run test:e2e')
+                            }
+                        }
                     }
                     post {
                         always {
