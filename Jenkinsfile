@@ -3,7 +3,7 @@ def runNpm(command) {
     if (env.USE_NODE_CONTAINER == 'true') {
         sh """
             ${CONTAINER_CMD} run --rm \
-                -v \${WORKSPACE}:/workspace:rw \
+                -v \$WORKSPACE:/workspace:rw \
                 -w /workspace \
                 ${NODE_CONTAINER_IMAGE} \
                 npm ${command}
@@ -18,7 +18,7 @@ def runNode(command) {
     if (env.USE_NODE_CONTAINER == 'true') {
         sh """
             ${CONTAINER_CMD} run --rm \
-                -v \${WORKSPACE}:/workspace:rw \
+                -v \$WORKSPACE:/workspace:rw \
                 -w /workspace \
                 ${NODE_CONTAINER_IMAGE} \
                 node ${command}
