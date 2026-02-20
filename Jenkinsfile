@@ -375,7 +375,7 @@ Alternatively, set CONTAINER_CMD='docker' in Jenkinsfile if Docker is installed.
                 stage('Validate Assets') {
                     steps {
                         echo '🎨 Validating game assets...'
-                        sh """
+                        sh '''
                             # Check if asset directories exist
                             test -d ${ASSETS_DIR}/tilemaps || echo "⚠️ Missing tilemaps directory"
                             test -d ${ASSETS_DIR}/sprites || echo "⚠️ Missing sprites directory"
@@ -387,13 +387,13 @@ Alternatively, set CONTAINER_CMD='docker' in Jenkinsfile if Docker is installed.
                             find ${ASSETS_DIR} -type f -name "*.tsx" | wc -l | xargs echo "  Tilesets:"
 
                             # Check total asset size
-                            ASSET_SIZE=\$(du -sm ${ASSETS_DIR} | cut -f1)
-                            echo "  Total size: \${ASSET_SIZE}MB"
+                            ASSET_SIZE=$(du -sm ${ASSETS_DIR} | cut -f1)
+                            echo "  Total size: ${ASSET_SIZE}MB"
 
-                            if [ "\$ASSET_SIZE" -gt "${MAX_ASSET_SIZE_MB}" ]; then
+                            if [ "$ASSET_SIZE" -gt "${MAX_ASSET_SIZE_MB}" ]; then
                                 echo "⚠️ Assets exceed ${MAX_ASSET_SIZE_MB}MB threshold"
                             fi
-                        """
+                        '''
                         echo '✅ Asset validation complete'
                     }
                 }
@@ -434,10 +434,10 @@ Alternatively, set CONTAINER_CMD='docker' in Jenkinsfile if Docker is installed.
                             )
 
                             // Parse and display results
-                            sh """
+                            sh '''
                                 echo "📊 npm audit results:"
                                 cat ${REPORT_DIR}/npm-audit.json | jq -r '.metadata | "Vulnerabilities: \\(.vulnerabilities.total) (Critical: \\(.vulnerabilities.critical), High: \\(.vulnerabilities.high), Medium: \\(.vulnerabilities.moderate), Low: \\(.vulnerabilities.low))"'
-                            """
+                            '''
 
                             // Warning if vulnerabilities found (don't fail)
                             if (auditResult != 0) {
@@ -552,10 +552,10 @@ Alternatively, set CONTAINER_CMD='docker' in Jenkinsfile if Docker is installed.
 
                             // Check for critical/high vulnerabilities
                             def criticalCount = sh(
-                                script: """
+                                script: '''
                                     cat ${TRIVY_DIR}/trivy-vuln.json | \
                                     jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL" or .Severity=="HIGH")] | length'
-                                """,
+                                ''',
                                 returnStdout: true
                             ).trim()
 
@@ -679,7 +679,7 @@ Alternatively, set CONTAINER_CMD='docker' in Jenkinsfile if Docker is installed.
                     echo "✅ Build completed in ${duration}s"
 
                     // Analyze build output
-                    sh """
+                    sh '''
                         echo "📊 Build Analysis:"
 
                         # Check if dist directory exists
@@ -689,26 +689,26 @@ Alternatively, set CONTAINER_CMD='docker' in Jenkinsfile if Docker is installed.
                         fi
 
                         # Count files
-                        echo "  Files: \$(find ${DIST_DIR} -type f | wc -l)"
+                        echo "  Files: $(find ${DIST_DIR} -type f | wc -l)"
 
                         # Calculate bundle size
-                        BUNDLE_SIZE=\$(du -sm ${DIST_DIR} | cut -f1)
-                        echo "  Bundle size: \${BUNDLE_SIZE}MB"
+                        BUNDLE_SIZE=$(du -sm ${DIST_DIR} | cut -f1)
+                        echo "  Bundle size: ${BUNDLE_SIZE}MB"
 
                         # Check bundle size threshold
-                        if [ "\$BUNDLE_SIZE" -gt "${MAX_BUNDLE_SIZE_MB}" ]; then
+                        if [ "$BUNDLE_SIZE" -gt "${MAX_BUNDLE_SIZE_MB}" ]; then
                             echo "⚠️ Bundle size exceeds ${MAX_BUNDLE_SIZE_MB}MB threshold"
                         fi
 
                         # List main files
                         echo "  Main files:"
                         find ${DIST_DIR} -name "*.js" -o -name "*.html" -o -name "*.css" | \
-                            xargs ls -lh | awk '{print "    " \$9 " (" \$5 ")"}'
+                            xargs ls -lh | awk '{print "    " $9 " (" $5 ")"}'
 
                         # Check for source maps (should exist in production)
-                        MAP_COUNT=\$(find ${DIST_DIR} -name "*.map" | wc -l)
-                        echo "  Source maps: \$MAP_COUNT"
-                    """
+                        MAP_COUNT=$(find ${DIST_DIR} -name "*.map" | wc -l)
+                        echo "  Source maps: $MAP_COUNT"
+                    '''
                 }
             }
             post {
@@ -756,7 +756,7 @@ EOF
                     // Create nginx.conf if it doesn't exist
                     if (!fileExists('nginx.conf')) {
                         echo '📝 Creating nginx.conf for SPA routing...'
-                        sh """
+                        sh '''
                             cat > nginx.conf <<'EOF'
 server {
     listen 80;
@@ -769,18 +769,18 @@ server {
     gzip_types text/plain text/css application/json application/javascript text/xml application/xml application/xml+rss text/javascript;
 
     # Cache static assets
-    location ~* \\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
         expires 1y;
         add_header Cache-Control "public, immutable";
     }
 
     # SPA fallback - serve index.html for all routes
     location / {
-        try_files \\$uri \\$uri/ /index.html;
+        try_files $uri $uri/ /index.html;
     }
 }
 EOF
-                        """
+                        '''
                     }
 
                     // Build the image
@@ -791,7 +791,7 @@ EOF
                             --label "version=${VERSION}" \\
                             --label "build-number=${BUILD_NUMBER}" \\
                             --label "git-commit=${GIT_SHORT_COMMIT}" \\
-                            --label "build-date=\$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \\
+                            --label "build-date=\\\$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \\
                             --label "project=${PROJECT_NAME}" \\
                             .
                     """
@@ -840,10 +840,10 @@ EOF
 
                     // Check for critical vulnerabilities in image
                     def imageCriticalCount = sh(
-                        script: """
-                            cat ${TRIVY_DIR}/image-scan.json | \\
+                        script: '''
+                            cat ${TRIVY_DIR}/image-scan.json | \
                             jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length'
-                        """,
+                        ''',
                         returnStdout: true
                     ).trim()
 
@@ -886,12 +886,12 @@ EOF
                         usernameVariable: 'REGISTRY_USER',
                         passwordVariable: 'REGISTRY_PASS'
                     )]) {
-                        sh """
-                            echo "\$REGISTRY_PASS" | \\
-                            ${CONTAINER_CMD} login ${REGISTRY_URL} \\
-                                --username "\$REGISTRY_USER" \\
+                        sh '''
+                            echo "$REGISTRY_PASS" | \
+                            ''' + "${CONTAINER_CMD} login ${REGISTRY_URL}" + ''' \
+                                --username "$REGISTRY_USER" \
                                 --password-stdin
-                        """
+                        '''
                     }
 
                     // Push both tags
