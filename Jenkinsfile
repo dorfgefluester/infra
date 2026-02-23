@@ -861,10 +861,12 @@ EOF
             post {
                 always {
                     publishHTML([
+                        allowMissing: true,
                         reportDir: "${TRIVY_DIR}",
                         reportFiles: 'image-scan.html',
                         reportName: 'Container Image Scan',
-                        keepAll: true
+                        keepAll: true,
+                        alwaysLinkToLastBuild: true
                     ])
                 }
             }
@@ -1007,6 +1009,7 @@ EOF
 
             // Publish HTML reports
             publishHTML([
+                allowMissing: true,
                 reportDir: "${REPORT_DIR}",
                 reportFiles: 'summary.html',
                 reportName: 'Security Summary',
@@ -1015,6 +1018,7 @@ EOF
             ])
 
             publishHTML([
+                allowMissing: true,
                 reportDir: "${DEPENDENCY_CHECK_DIR}",
                 reportFiles: 'dependency-check-report.html',
                 reportName: 'DependencyCheck Report',
@@ -1023,6 +1027,7 @@ EOF
             ])
 
             publishHTML([
+                allowMissing: true,
                 reportDir: "${TRIVY_DIR}",
                 reportFiles: 'trivy-report.html',
                 reportName: 'Trivy Report',
