@@ -286,13 +286,13 @@ Alternatively, set CONTAINER_CMD='docker' in Jenkinsfile if Docker is installed.
                         mkdir -p ${SEMGREP_DIR}
                     """
 
-                    // Pull required container images in parallel
+                    // Pull required container images in parallel (non-fatal — scans will fail gracefully if unavailable)
                     echo "📥 Pulling container images..."
                     sh """
                         ${CONTAINER_CMD} pull docker.io/owasp/dependency-check:latest &
                         ${CONTAINER_CMD} pull docker.io/aquasec/trivy:latest &
                         ${CONTAINER_CMD} pull docker.io/returntocorp/semgrep:latest &
-                        wait
+                        wait || true
                     """
 
                     // Display environment info
@@ -466,24 +466,26 @@ Alternatively, set CONTAINER_CMD='docker' in Jenkinsfile if Docker is installed.
 
                             def suppressionArg = suppressionFile ? "--suppression ${suppressionFile}" : ""
 
-                            sh """
-                                ${CONTAINER_CMD} run --rm \
-                                  -v \$WORKSPACE:/src:ro \
-                                  -v ${DEPENDENCY_CHECK_DIR}:/reports:rw \
-                                  -v dependency-check-data:/usr/share/dependency-check/data \
-                                  docker.io/owasp/dependency-check:latest \
-                                  --scan /src \
-                                  --format HTML \
-                                  --format JSON \
-                                  --format JUNIT \
-                                  --out /reports \
-                                  ${suppressionArg} \
-                                  --enableExperimental \
-                                  --nodeAuditSkipDevDependencies false \
-                                  --nodePackageSkipDevDependencies false \
-                                  --project "${PROJECT_NAME}" \
-                                  --failOnCVSS 0
-                            """
+                            catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
+                                sh """
+                                    ${CONTAINER_CMD} run --rm \
+                                      -v \$WORKSPACE:/src:ro \
+                                      -v ${DEPENDENCY_CHECK_DIR}:/reports:rw \
+                                      -v dependency-check-data:/usr/share/dependency-check/data \
+                                      docker.io/owasp/dependency-check:latest \
+                                      --scan /src \
+                                      --format HTML \
+                                      --format JSON \
+                                      --format JUNIT \
+                                      --out /reports \
+                                      ${suppressionArg} \
+                                      --enableExperimental \
+                                      --nodeAuditSkipDevDependencies false \
+                                      --nodePackageSkipDevDependencies false \
+                                      --project "${PROJECT_NAME}" \
+                                      --failOnCVSS 0
+                                """
+                            }
                         }
                         echo '✅ DependencyCheck complete'
                     }
@@ -499,6 +501,7 @@ Alternatively, set CONTAINER_CMD='docker' in Jenkinsfile if Docker is installed.
                     steps {
                         echo '🔍 Running Trivy vulnerability scan...'
                         script {
+                            catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
                             // Vulnerability scan
                             sh """
                                 ${CONTAINER_CMD} run --rm \
@@ -573,6 +576,7 @@ Alternatively, set CONTAINER_CMD='docker' in Jenkinsfile if Docker is installed.
                             if (criticalCount.toInteger() > 0) {
                                 unstable(message: "Trivy found ${criticalCount} CRITICAL/HIGH vulnerabilities")
                             }
+                            } // end catchError
                         }
                         echo '✅ Trivy scan complete'
                     }
@@ -581,29 +585,30 @@ Alternatively, set CONTAINER_CMD='docker' in Jenkinsfile if Docker is installed.
                 stage('Semgrep Scan') {
                     steps {
                         echo '🔎 Running Semgrep SAST scan...'
-                        sh """
-                            ${CONTAINER_CMD} run --rm \
-                              -v \$WORKSPACE:/src:ro \
-                              -v ${SEMGREP_DIR}:/reports:rw \
-                              docker.io/returntocorp/semgrep:latest \
-                              scan /src \
-                              --config=auto \
-                              --json \
-                              --output /reports/semgrep-results.json
-                        """
+                        catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
+                            sh """
+                                ${CONTAINER_CMD} run --rm \
+                                  -v \$WORKSPACE:/src:ro \
+                                  -v ${SEMGREP_DIR}:/reports:rw \
+                                  docker.io/returntocorp/semgrep:latest \
+                                  scan /src \
+                                  --config=auto \
+                                  --json \
+                                  --output /reports/semgrep-results.json
+                            """
 
-                        // Also generate SARIF
-                        sh """
-                            ${CONTAINER_CMD} run --rm \
-                              -v \$WORKSPACE:/src:ro \
-                              -v ${SEMGREP_DIR}:/reports:rw \
-                              docker.io/returntocorp/semgrep:latest \
-                              scan /src \
-                              --config=auto \
-                              --sarif \
-                              --output /reports/semgrep-results.sarif
-                        """
-
+                            // Also generate SARIF
+                            sh """
+                                ${CONTAINER_CMD} run --rm \
+                                  -v \$WORKSPACE:/src:ro \
+                                  -v ${SEMGREP_DIR}:/reports:rw \
+                                  docker.io/returntocorp/semgrep:latest \
+                                  scan /src \
+                                  --config=auto \
+                                  --sarif \
+                                  --output /reports/semgrep-results.sarif
+                            """
+                        }
                         echo '✅ Semgrep scan complete'
                     }
                 }
