@@ -106,6 +106,15 @@ pipeline {
                 echo '🔍 Checking required dependencies...'
 
                 script {
+                    // Auto-detect container runtime: prefer podman, fall back to docker
+                    if (sh(script: "command -v ${CONTAINER_CMD} > /dev/null 2>&1", returnStatus: true) != 0) {
+                        def fallback = (CONTAINER_CMD == 'podman') ? 'docker' : 'podman'
+                        if (sh(script: "command -v ${fallback} > /dev/null 2>&1", returnStatus: true) == 0) {
+                            echo "🔄 ${CONTAINER_CMD} not found, switching to ${fallback}"
+                            env.CONTAINER_CMD = fallback
+                        }
+                    }
+
                     def missingTools = []
                     def installedTools = []
 
