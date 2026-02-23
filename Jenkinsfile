@@ -642,7 +642,7 @@ Alternatively, set CONTAINER_CMD='docker' in Jenkinsfile if Docker is installed.
                 stage('E2E Tests') {
                     when {
                         expression {
-                            return env.BRANCH_NAME ==~ /(master|main|develop)/ || env.CHANGE_TARGET
+                            return env.BRANCH_NAME ==~ /(master|main|develop|0\.\d+(\.\d+)*)/ || env.CHANGE_TARGET
                         }
                     }
                     steps {
