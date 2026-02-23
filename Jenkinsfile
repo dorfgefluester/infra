@@ -614,6 +614,7 @@ Alternatively, set CONTAINER_CMD='docker' in Jenkinsfile if Docker is installed.
                         always {
                             // Publish coverage reports
                             publishHTML([
+                                allowMissing: true,
                                 reportDir: 'tests/coverage/lcov-report',
                                 reportFiles: 'index.html',
                                 reportName: 'Code Coverage',
@@ -653,6 +654,7 @@ Alternatively, set CONTAINER_CMD='docker' in Jenkinsfile if Docker is installed.
                         always {
                             // Publish Playwright report
                             publishHTML([
+                                allowMissing: true,
                                 reportDir: 'playwright-report',
                                 reportFiles: 'index.html',
                                 reportName: 'Playwright Report',
