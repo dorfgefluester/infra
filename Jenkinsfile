@@ -65,6 +65,10 @@ pipeline {
         MAX_ASSET_SIZE_MB = '50'  // Alert if total assets > 50MB
     }
 
+    tools {
+        sonarQubeScanner 'SonarScanner'
+    }
+
     options {
         // Keep builds for 30 days
         buildDiscarder(logRotator(numToKeepStr: '30', artifactNumToKeepStr: '10'))
@@ -661,7 +665,7 @@ Alternatively, set CONTAINER_CMD='docker' in Jenkinsfile if Docker is installed.
                                 """
                             } else {
                                 echo '📦 Installing Playwright browsers for native Node...'
-                                sh 'npx playwright install --with-deps chromium'
+                                sh 'npx playwright install chromium'
                                 runNpm('run test:e2e')
                             }
                         }
@@ -678,6 +682,25 @@ Alternatively, set CONTAINER_CMD='docker' in Jenkinsfile if Docker is installed.
                                 alwaysLinkToLastBuild: true
                             ])
                         }
+                    }
+                }
+            }
+        }
+
+        stage('SonarQube Analysis') {
+            steps {
+                echo '🔎 Running SonarQube analysis...'
+                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                    withSonarQubeEnv('SonarQube') {
+                        sh """
+                            sonar-scanner \
+                                -Dsonar.projectKey=${PROJECT_NAME} \
+                                -Dsonar.projectName='Dorfgeflüster' \
+                                -Dsonar.sources=src \
+                                -Dsonar.exclusions=**/node_modules/**,dist/**,public/** \
+                                -Dsonar.javascript.lcov.reportPaths=tests/coverage/lcov.info \
+                                -Dsonar.host.url=http://jenkins:9000
+                        """
                     }
                 }
             }
