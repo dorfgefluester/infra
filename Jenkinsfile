@@ -660,6 +660,8 @@ Alternatively, set CONTAINER_CMD='docker' in Jenkinsfile if Docker is installed.
                                         npm run test:e2e
                                 """
                             } else {
+                                echo '📦 Installing Playwright browsers for native Node...'
+                                sh 'npx playwright install --with-deps chromium'
                                 runNpm('run test:e2e')
                             }
                         }
