@@ -45,6 +45,20 @@ pipeline {
             }
         }
 
+        stage('Lint') {
+            steps {
+                sh 'npm run lint --if-present'
+            }
+        }
+
+        stage('Format Check') {
+            steps {
+                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                    sh 'npm run format:check --if-present'
+                }
+            }
+        }
+
         stage('Test') {
             steps {
                 sh 'npm test -- --ci --coverage=false'
@@ -53,7 +67,7 @@ pipeline {
 
         stage('E2E (Optional)') {
             when {
-                expression { return params.RUN_E2E }
+                expression { return params.RUN_E2E && env.BRANCH_NAME == 'main' }
             }
             steps {
                 sh 'npm run test:e2e'
