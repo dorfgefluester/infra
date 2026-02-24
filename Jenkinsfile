@@ -1,6 +1,10 @@
 pipeline {
     agent any
 
+    parameters {
+        booleanParam(name: 'RUN_E2E', defaultValue: false, description: 'Run Playwright E2E tests')
+    }
+
     options {
         buildDiscarder(logRotator(numToKeepStr: '30', artifactNumToKeepStr: '10'))
         timeout(time: 45, unit: 'MINUTES')
@@ -43,7 +47,16 @@ pipeline {
 
         stage('Test') {
             steps {
-                sh 'npm test -- --ci'
+                sh 'npm test -- --ci --coverage=false'
+            }
+        }
+
+        stage('E2E (Optional)') {
+            when {
+                expression { return params.RUN_E2E }
+            }
+            steps {
+                sh 'npm run test:e2e'
             }
         }
 
