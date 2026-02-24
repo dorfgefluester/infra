@@ -66,7 +66,7 @@ pipeline {
     }
 
     tools {
-        'hudson.plugins.sonar.SonarRunnerInstallation' 'SonarScanner'
+        'hudson.plugins.sonar.SonarRunnerInstallation' 'SonarQube'
     }
 
     options {
