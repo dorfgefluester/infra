@@ -53,9 +53,7 @@ pipeline {
 
         stage('Format Check') {
             steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                    sh 'npm run format:check --if-present'
-                }
+                sh 'npm run format:check --if-present'
             }
         }
 
