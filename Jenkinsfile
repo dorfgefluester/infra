@@ -31,10 +31,18 @@ pipeline {
                     def isVersionBranch = (env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/)
                     if (isVersionBranch) {
                         def credId = scm.userRemoteConfigs[0].credentialsId
+                        def repoUrl = scm.userRemoteConfigs[0].url
                         def latest = ''
-                        withCredentials([gitUsernamePassword(credentialsId: credId, gitToolName: 'Default')]) {
+                        withCredentials([usernamePassword(credentialsId: credId, usernameVariable: 'GIT_USERNAME', passwordVariable: 'GIT_PASSWORD')]) {
                             latest = sh(
-                                script: 'git ls-remote --heads origin | awk \'{print $2}\' | sed \'s#refs/heads/##\' | grep -E \'^[0-9]+\\.[0-9]+\\.[0-9]+$\' | sort -V | tail -n 1',
+                                script: """
+                                  git ls-remote --heads https://${GIT_USERNAME}:${GIT_PASSWORD}@${repoUrl.replaceFirst('https?://', '')} \
+                                    | awk '{print \$2}' \
+                                    | sed 's#refs/heads/##' \
+                                    | grep -E '^[0-9]+\\.[0-9]+\\.[0-9]+$' \
+                                    | sort -V \
+                                    | tail -n 1
+                                """.stripIndent(),
                                 returnStdout: true
                             ).trim()
                         }
