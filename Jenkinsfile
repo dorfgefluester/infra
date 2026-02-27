@@ -15,10 +15,38 @@ pipeline {
     environment {
         PROJECT_NAME = 'dorfgefluester'
         NODE_MAJOR_REQUIRED = '18'
+        BUILD_ALLOWED = 'true'
     }
 
     stages {
+        stage('Gate: Latest Version Branch') {
+            steps {
+                script {
+                    def isVersionBranch = (env.BRANCH_NAME ==~ /\\d+\\.\\d+\\.\\d+/)
+                    if (isVersionBranch) {
+                        def latest = sh(
+                            script: "git ls-remote --heads origin | awk '{print $2}' | sed 's#refs/heads/##' | grep -E '^[0-9]+\\.[0-9]+\\.[0-9]+$' | sort -V | tail -n 1",
+                            returnStdout: true
+                        ).trim()
+                        env.LATEST_VERSION_BRANCH = latest
+                        if (env.BRANCH_NAME != latest) {
+                            env.BUILD_ALLOWED = 'false'
+                            currentBuild.result = 'NOT_BUILT'
+                            echo "Skipping build for ${env.BRANCH_NAME} (latest is ${latest})."
+                        } else {
+                            echo "Building latest version branch: ${latest}."
+                        }
+                    } else {
+                        echo "Non-version branch (${env.BRANCH_NAME}); continuing."
+                    }
+                }
+            }
+        }
+
         stage('Checkout') {
+            when {
+                expression { return env.BUILD_ALLOWED == 'true' }
+            }
             steps {
                 checkout scm
                 sh 'git rev-parse --short HEAD'
@@ -26,6 +54,9 @@ pipeline {
         }
 
         stage('Verify Tooling') {
+            when {
+                expression { return env.BUILD_ALLOWED == 'true' }
+            }
             steps {
                 sh 'node --version'
                 sh 'npm --version'
@@ -40,24 +71,36 @@ pipeline {
         }
 
         stage('Install') {
+            when {
+                expression { return env.BUILD_ALLOWED == 'true' }
+            }
             steps {
                 sh 'npm ci --prefer-offline --no-audit'
             }
         }
 
         stage('Lint') {
+            when {
+                expression { return env.BUILD_ALLOWED == 'true' }
+            }
             steps {
                 sh 'npm run lint --if-present'
             }
         }
 
         stage('Format Check') {
+            when {
+                expression { return env.BUILD_ALLOWED == 'true' }
+            }
             steps {
                 sh 'npm run format:check --if-present'
             }
         }
 
         stage('Test') {
+            when {
+                expression { return env.BUILD_ALLOWED == 'true' }
+            }
             steps {
                 script {
                     def junitDir = 'tests/junit'
@@ -80,6 +123,9 @@ pipeline {
         }
 
         stage('Coverage (Non-Blocking)') {
+            when {
+                expression { return env.BUILD_ALLOWED == 'true' }
+            }
             steps {
                 catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
                     sh 'npm run test:coverage --if-present'
@@ -94,7 +140,7 @@ pipeline {
 
         stage('E2E (Optional)') {
             when {
-                expression { return params.RUN_E2E && env.BRANCH_NAME == 'main' }
+                expression { return env.BUILD_ALLOWED == 'true' && params.RUN_E2E && env.BRANCH_NAME == 'main' }
             }
             steps {
                 sh 'npm run test:e2e'
@@ -102,6 +148,9 @@ pipeline {
         }
 
         stage('Build') {
+            when {
+                expression { return env.BUILD_ALLOWED == 'true' }
+            }
             steps {
                 sh 'npm run build'
             }
