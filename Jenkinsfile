@@ -28,7 +28,7 @@ pipeline {
         stage('Gate: Latest Version Branch') {
             steps {
                 script {
-                    def isVersionBranch = (env.BRANCH_NAME ==~ /\\d+\\.\\d+\\.\\d+/)
+                    def isVersionBranch = (env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/)
                     if (isVersionBranch) {
                         def latest = sh(
                             script: 'git ls-remote --heads origin | awk \'{print $2}\' | sed \'s#refs/heads/##\' | grep -E \'^[0-9]+\\.[0-9]+\\.[0-9]+$\' | sort -V | tail -n 1',
@@ -126,7 +126,7 @@ pipeline {
             post {
                 always {
                     script {
-                        def hasReports = sh(script: 'ls tests/junit/**/*.xml >/dev/null 2>&1', returnStatus: true) == 0
+                        def hasReports = sh(script: "find tests/junit -type f -name '*.xml' -maxdepth 2 >/dev/null 2>&1", returnStatus: true) == 0
                         if (hasReports) {
                             junit testResults: 'tests/junit/**/*.xml', allowEmptyResults: true
                         } else {
@@ -181,7 +181,15 @@ pipeline {
                 expression { return env.BUILD_ALLOWED == 'true' }
             }
             steps {
-                sh 'helm lint helm/dorfgefluester'
+                script {
+                    def hasHelm = sh(script: 'command -v helm >/dev/null 2>&1', returnStatus: true) == 0
+                    if (hasHelm) {
+                        sh 'helm lint helm/dorfgefluester'
+                    } else {
+                        currentBuild.result = currentBuild.result ?: 'UNSTABLE'
+                        echo 'Helm not found on agent; skipping Helm Lint.'
+                    }
+                }
             }
         }
 
@@ -190,14 +198,23 @@ pipeline {
                 expression { return env.BUILD_ALLOWED == 'true' }
             }
             steps {
-                sh """
-                  helm template ${RELEASE} helm/dorfgefluester \
-                    --namespace ${NAMESPACE} \
-                    --set image.repository=${IMAGE_REPO} \
-                    --set image.tag=ci-dry-run \
-                    --set ingress.host=dorf.test > /tmp/${RELEASE}-rendered.yaml
-                  kubectl apply --dry-run=client -f /tmp/${RELEASE}-rendered.yaml
-                """
+                script {
+                    def hasHelm = sh(script: 'command -v helm >/dev/null 2>&1', returnStatus: true) == 0
+                    def hasKubectl = sh(script: 'command -v kubectl >/dev/null 2>&1', returnStatus: true) == 0
+                    if (hasHelm && hasKubectl) {
+                        sh """
+                          helm template ${RELEASE} helm/dorfgefluester \
+                            --namespace ${NAMESPACE} \
+                            --set image.repository=${IMAGE_REPO} \
+                            --set image.tag=ci-dry-run \
+                            --set ingress.host=dorf.test > /tmp/${RELEASE}-rendered.yaml
+                          kubectl apply --dry-run=client -f /tmp/${RELEASE}-rendered.yaml
+                        """
+                    } else {
+                        currentBuild.result = currentBuild.result ?: 'UNSTABLE'
+                        echo 'Helm or kubectl not found on agent; skipping Helm Render (Dry Run).'
+                    }
+                }
             }
         }
 
@@ -229,16 +246,13 @@ pipeline {
                     }
 
                     def url = "${baseUrl}${latestPath}/lastBuild/api/json"
-                    def result = sh(
-                        script: """
-                          curl -sf '${url}' |
-                          tr ',' '\\n' |
-                          grep -m1 '"result"' |
-                          sed 's/.*"result"[[:space:]]*:[[:space:]]*"//' |
-                          cut -d '"' -f1
-                        """,
+                    def jsonText = sh(
+                        script: "curl -sf '${url}'",
                         returnStdout: true
                     ).trim()
+
+                    def parsed = new groovy.json.JsonSlurperClassic().parseText(jsonText)
+                    def result = (parsed?.result ?: 'UNKNOWN').toString().trim()
 
                     if (!result) {
                         result = 'UNKNOWN'
