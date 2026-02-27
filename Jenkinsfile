@@ -59,7 +59,36 @@ pipeline {
 
         stage('Test') {
             steps {
-                sh 'npm test -- --ci --coverage=false'
+                script {
+                    def junitDir = 'tests/junit'
+                    def hasJunit = sh(script: '[ -d node_modules/jest-junit ]', returnStatus: true) == 0
+                    if (hasJunit) {
+                        sh "mkdir -p ${junitDir}"
+                        withEnv(["JEST_JUNIT_OUTPUT_DIR=${junitDir}", "JEST_JUNIT_OUTPUT_NAME=jest-junit.xml"]) {
+                            sh 'npm test -- --ci --coverage=false --reporters=default --reporters=jest-junit'
+                        }
+                    } else {
+                        sh 'npm test -- --ci --coverage=false'
+                    }
+                }
+            }
+            post {
+                always {
+                    junit testResults: 'tests/junit/**/*.xml', allowEmptyResults: true
+                }
+            }
+        }
+
+        stage('Coverage (Non-Blocking)') {
+            steps {
+                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                    sh 'npm run test:coverage --if-present'
+                }
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'tests/coverage/**/*', fingerprint: true, allowEmptyArchive: true
+                }
             }
         }
 
