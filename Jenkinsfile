@@ -16,6 +16,12 @@ pipeline {
         PROJECT_NAME = 'dorfgefluester'
         NODE_MAJOR_REQUIRED = '18'
         BUILD_ALLOWED = 'true'
+        REGISTRY = 'dev-env-01:5000'
+        IMAGE_REPO = "${REGISTRY}/dorfgefluester"
+        DEPLOY_HOST = 'dev-env-01'
+        DEPLOY_USER = 'stephan'
+        NAMESPACE = 'dev'
+        RELEASE = 'dorfgefluester'
     }
 
     stages {
@@ -25,7 +31,7 @@ pipeline {
                     def isVersionBranch = (env.BRANCH_NAME ==~ /\\d+\\.\\d+\\.\\d+/)
                     if (isVersionBranch) {
                         def latest = sh(
-                            script: "git ls-remote --heads origin | awk '{print $2}' | sed 's#refs/heads/##' | grep -E '^[0-9]+\\.[0-9]+\\.[0-9]+$' | sort -V | tail -n 1",
+                            script: 'git ls-remote --heads origin | awk \'{print $2}\' | sed \'s#refs/heads/##\' | grep -E \'^[0-9]+\\.[0-9]+\\.[0-9]+$\' | sort -V | tail -n 1',
                             returnStdout: true
                         ).trim()
                         env.LATEST_VERSION_BRANCH = latest
@@ -84,7 +90,7 @@ pipeline {
                 expression { return env.BUILD_ALLOWED == 'true' }
             }
             steps {
-                sh 'npm run lint --if-present'
+                sh 'npm run lint --if-present -- --max-warnings=0'
             }
         }
 
@@ -111,13 +117,22 @@ pipeline {
                             sh 'npm test -- --ci --coverage=false --reporters=default --reporters=jest-junit'
                         }
                     } else {
-                        sh 'npm test -- --ci --coverage=false'
+                        sh "mkdir -p ${junitDir}"
+                        sh 'npm test -- --ci --coverage=false --json --outputFile=tests/junit/jest.json'
+                        sh 'node scripts/jest-json-to-junit.cjs tests/junit/jest.json tests/junit/jest-junit.xml'
                     }
                 }
             }
             post {
                 always {
-                    junit testResults: 'tests/junit/**/*.xml', allowEmptyResults: true
+                    script {
+                        def hasReports = sh(script: 'ls tests/junit/**/*.xml >/dev/null 2>&1', returnStatus: true) == 0
+                        if (hasReports) {
+                            junit testResults: 'tests/junit/**/*.xml', allowEmptyResults: true
+                        } else {
+                            echo 'No JUnit reports found; skipping junit publishing.'
+                        }
+                    }
                 }
             }
         }
@@ -140,7 +155,7 @@ pipeline {
 
         stage('E2E (Optional)') {
             when {
-                expression { return env.BUILD_ALLOWED == 'true' && params.RUN_E2E && env.BRANCH_NAME == 'main' }
+                expression { return env.BUILD_ALLOWED == 'true' && params.RUN_E2E && env.BRANCH_NAME == 'master' }
             }
             steps {
                 sh 'npm run test:e2e'
@@ -157,6 +172,118 @@ pipeline {
             post {
                 success {
                     archiveArtifacts artifacts: 'dist/**/*', fingerprint: true, allowEmptyArchive: false
+                }
+            }
+        }
+
+        stage('Helm Lint') {
+            when {
+                expression { return env.BUILD_ALLOWED == 'true' }
+            }
+            steps {
+                sh 'helm lint helm/dorfgefluester'
+            }
+        }
+
+        stage('Helm Render (Dry Run)') {
+            when {
+                expression { return env.BUILD_ALLOWED == 'true' }
+            }
+            steps {
+                sh """
+                  helm template ${RELEASE} helm/dorfgefluester \
+                    --namespace ${NAMESPACE} \
+                    --set image.repository=${IMAGE_REPO} \
+                    --set image.tag=ci-dry-run \
+                    --set ingress.host=dorf.test > /tmp/${RELEASE}-rendered.yaml
+                  kubectl apply --dry-run=client -f /tmp/${RELEASE}-rendered.yaml
+                """
+            }
+        }
+
+        stage('Gate: Latest Version Build Success') {
+            when {
+                expression { return env.BUILD_ALLOWED == 'true' && env.BRANCH_NAME == 'master' }
+            }
+            steps {
+                script {
+                    def latest = sh(
+                        script: 'git ls-remote --heads origin | awk \'{print $2}\' | sed \'s#refs/heads/##\' | grep -E \'^[0-9]+\\.[0-9]+\\.[0-9]+$\' | sort -V | tail -n 1',
+                        returnStdout: true
+                    ).trim()
+                    if (!latest) {
+                        error('No version branches found; cannot gate master deploy.')
+                    }
+
+                    def jobParts = env.JOB_NAME.tokenize('/')
+                    if (jobParts.size() < 2) {
+                        error("Unexpected JOB_NAME format: ${env.JOB_NAME}")
+                    }
+
+                    def rootParts = jobParts[0..-2]
+                    def rootPath = rootParts.collect { "job/${it}" }.join('/')
+                    def latestPath = (rootParts + [latest]).collect { "job/${it}" }.join('/')
+                    def baseUrl = env.JENKINS_URL ?: ''
+                    if (!baseUrl) {
+                        error('JENKINS_URL is not set; cannot check latest version build status.')
+                    }
+
+                    def url = "${baseUrl}${latestPath}/lastBuild/api/json"
+                    def result = sh(
+                        script: """
+                          curl -sf '${url}' |
+                          sed -n 's/.*"result"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
+                          head -n 1
+                        """,
+                        returnStdout: true
+                    ).trim()
+
+                    if (!result) {
+                        result = 'UNKNOWN'
+                    }
+
+                    if (result != 'SUCCESS') {
+                        error("Latest version branch ${latest} build status is ${result}; blocking master deploy.")
+                    }
+
+                    echo "Latest version branch ${latest} is SUCCESS; master deploy allowed."
+                }
+            }
+        }
+
+        stage('Build Image') {
+            when {
+                expression { return env.BUILD_ALLOWED == 'true' && env.BRANCH_NAME == 'master' }
+            }
+            steps {
+                script {
+                    env.IMAGE_TAG = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                }
+                sh """
+                  docker build -t ${IMAGE_REPO}:${IMAGE_TAG} .
+                  docker push ${IMAGE_REPO}:${IMAGE_TAG}
+                """
+            }
+        }
+
+        stage('Deploy to k3s (Helm)') {
+            when {
+                expression { return env.BUILD_ALLOWED == 'true' && env.BRANCH_NAME == 'master' }
+            }
+            steps {
+                sshagent(credentials: ['dev-env-ssh']) {
+                    sh """
+                      scp -o StrictHostKeyChecking=no -r helm/dorfgefluester ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/dorfgefluester-chart
+                      ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} '
+                        set -e
+                        sudo helm upgrade --install ${RELEASE} /tmp/dorfgefluester-chart \
+                          --namespace ${NAMESPACE} --create-namespace \
+                          --set image.repository=${IMAGE_REPO} \
+                          --set image.tag=${IMAGE_TAG} \
+                          --set ingress.host=dorf.test
+                        sudo k3s kubectl -n ${NAMESPACE} rollout status deploy/${RELEASE} --timeout=180s
+                      '
+                    """
                 }
             }
         }
