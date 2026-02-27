@@ -30,10 +30,14 @@ pipeline {
                 script {
                     def isVersionBranch = (env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/)
                     if (isVersionBranch) {
-                        def latest = sh(
-                            script: 'git ls-remote --heads origin | awk \'{print $2}\' | sed \'s#refs/heads/##\' | grep -E \'^[0-9]+\\.[0-9]+\\.[0-9]+$\' | sort -V | tail -n 1',
-                            returnStdout: true
-                        ).trim()
+                        def credId = scm.userRemoteConfigs[0].credentialsId
+                        def latest = ''
+                        withCredentials([gitUsernamePassword(credentialsId: credId, gitToolName: 'Default')]) {
+                            latest = sh(
+                                script: 'git ls-remote --heads origin | awk \'{print $2}\' | sed \'s#refs/heads/##\' | grep -E \'^[0-9]+\\.[0-9]+\\.[0-9]+$\' | sort -V | tail -n 1',
+                                returnStdout: true
+                            ).trim()
+                        }
                         env.LATEST_VERSION_BRANCH = latest
                         if (env.BRANCH_NAME != latest) {
                             env.BUILD_ALLOWED = 'false'
@@ -224,10 +228,14 @@ pipeline {
             }
             steps {
                 script {
-                    def latest = sh(
-                        script: 'git ls-remote --heads origin | awk \'{print $2}\' | sed \'s#refs/heads/##\' | grep -E \'^[0-9]+\\.[0-9]+\\.[0-9]+$\' | sort -V | tail -n 1',
-                        returnStdout: true
-                    ).trim()
+                    def credId = scm.userRemoteConfigs[0].credentialsId
+                    def latest = ''
+                    withCredentials([gitUsernamePassword(credentialsId: credId, gitToolName: 'Default')]) {
+                        latest = sh(
+                            script: 'git ls-remote --heads origin | awk \'{print $2}\' | sed \'s#refs/heads/##\' | grep -E \'^[0-9]+\\.[0-9]+\\.[0-9]+$\' | sort -V | tail -n 1',
+                            returnStdout: true
+                        ).trim()
+                    }
                     if (!latest) {
                         error('No version branches found; cannot gate master deploy.')
                     }
