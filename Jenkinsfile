@@ -232,8 +232,10 @@ pipeline {
                     def result = sh(
                         script: """
                           curl -sf '${url}' |
-                          sed -n 's/.*"result"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' |
-                          head -n 1
+                          tr ',' '\\n' |
+                          grep -m1 '"result"' |
+                          sed 's/.*"result"[[:space:]]*:[[:space:]]*"//' |
+                          cut -d '"' -f1
                         """,
                         returnStdout: true
                     ).trim()
