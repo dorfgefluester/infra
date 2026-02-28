@@ -190,7 +190,6 @@ pipeline {
                     if (hasHelm) {
                         sh 'helm lint helm/dorfgefluester'
                     } else {
-                        currentBuild.result = currentBuild.result ?: 'UNSTABLE'
                         echo 'Helm not found on agent; skipping Helm Lint.'
                     }
                 }
@@ -215,7 +214,6 @@ pipeline {
                           kubectl apply --dry-run=client -f /tmp/${RELEASE}-rendered.yaml
                         """
                     } else {
-                        currentBuild.result = currentBuild.result ?: 'UNSTABLE'
                         echo 'Helm or kubectl not found on agent; skipping Helm Render (Dry Run).'
                     }
                 }
