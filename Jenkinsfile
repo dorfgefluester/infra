@@ -288,6 +288,56 @@ pipeline {
             }
         }
 
+        stage('Deploy to dev-env-01') {
+            agent any
+            when {
+                branch pattern: '0.*', comparator: 'GLOB'
+            }
+            steps {
+                script {
+                    env.IMAGE_TAG = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                }
+                sshagent(credentials: ['dev-env-ssh']) {
+                    sh """
+                        scp -r helm/dorfgefluester ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/dorfgefluester-chart
+
+                        ssh ${DEPLOY_USER}@${DEPLOY_HOST} '
+                          set -e
+                          sudo helm upgrade --install ${RELEASE} /tmp/dorfgefluester-chart \
+                            --namespace dev --create-namespace \
+                            --set image.repository=${IMAGE_REPO} \
+                            --set image.tag=${IMAGE_TAG}
+                        '
+                    """
+                }
+            }
+        }
+
+        stage('Deploy to Staging') {
+            agent any
+            when {
+                branch 'staging'
+            }
+            steps {
+                script {
+                    env.IMAGE_TAG = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                }
+                sshagent(credentials: ['dev-env-ssh']) {
+                    sh """
+                        scp -r helm/dorfgefluester ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/dorfgefluester-chart
+
+                        ssh ${DEPLOY_USER}@${DEPLOY_HOST} '
+                          set -e
+                          sudo helm upgrade --install ${RELEASE} /tmp/dorfgefluester-chart \
+                            --namespace staging --create-namespace \
+                            --set image.repository=${IMAGE_REPO} \
+                            --set image.tag=${IMAGE_TAG}
+                        '
+                    """
+                }
+            }
+        }
+
         stage('Deploy to k3s (Helm)') {
             when {
                 expression { return env.BUILD_ALLOWED == 'true' && env.BRANCH_NAME == 'master' }
@@ -307,6 +357,20 @@ pipeline {
                       '
                     """
                 }
+            }
+        }
+
+        stage('Deploy to Production') {
+            agent any
+            when {
+                branch 'master'
+            }
+            steps {
+                input message: 'Deploy to production?', ok: 'Deploy'
+                sh '''
+                echo "Deploying to production environment..."
+                # Add production deployment commands here
+                '''
             }
         }
     }
