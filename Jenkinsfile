@@ -290,10 +290,26 @@ pipeline {
                 script {
                     env.IMAGE_TAG = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
                 }
-                sh """
-                  docker build -t ${IMAGE_REPO}:${IMAGE_TAG} .
-                  docker push ${IMAGE_REPO}:${IMAGE_TAG}
-                """
+                sshagent(credentials: [env.SSH_CRED_ID]) {
+                    sh """
+                      set -e
+                      docker build -t ${IMAGE_REPO}:${IMAGE_TAG} .
+                      if docker push ${IMAGE_REPO}:${IMAGE_TAG}; then
+                        echo 'Pushed image from Jenkins agent.'
+                      else
+                        echo 'Direct push failed; falling back to push via ${DEPLOY_HOST}.'
+                        docker save ${IMAGE_REPO}:${IMAGE_TAG} | gzip > /tmp/${RELEASE}-${IMAGE_TAG}.tar.gz
+                        scp -o StrictHostKeyChecking=no /tmp/${RELEASE}-${IMAGE_TAG}.tar.gz ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/
+                        ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} '
+                          set -e
+                          gunzip -c /tmp/${RELEASE}-${IMAGE_TAG}.tar.gz | sudo docker load
+                          sudo docker push ${IMAGE_REPO}:${IMAGE_TAG}
+                          rm -f /tmp/${RELEASE}-${IMAGE_TAG}.tar.gz
+                        '
+                        rm -f /tmp/${RELEASE}-${IMAGE_TAG}.tar.gz
+                      fi
+                    """
+                }
             }
         }
 
