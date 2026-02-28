@@ -19,9 +19,13 @@ pipeline {
         REGISTRY = 'dev-env-01:5000'
         IMAGE_REPO = "${REGISTRY}/dorfgefluester"
         DEPLOY_HOST = 'dev-env-01'
-        DEPLOY_USER = 'stephan'
+        DEPLOY_USER = 'deploy'
+        SSH_CRED_ID = 'dev-env-01-ssh'
         NAMESPACE = 'dev'
         RELEASE = 'dorfgefluester'
+        JENKINS_URL = 'http://jenkins/'
+        STAGING_NAMESPACE = 'staging'
+        PROD_NAMESPACE = 'production'
     }
 
     stages {
@@ -275,7 +279,12 @@ pipeline {
 
         stage('Build Image') {
             when {
-                expression { return env.BUILD_ALLOWED == 'true' && env.BRANCH_NAME == 'master' }
+                expression { return env.BUILD_ALLOWED == 'true' }
+                anyOf {
+                    branch pattern: '0.*', comparator: 'GLOB'
+                    branch 'staging'
+                    branch 'master'
+                }
             }
             steps {
                 script {
@@ -288,25 +297,132 @@ pipeline {
             }
         }
 
+        stage('Preflight: k3s ready') {
+            agent any
+            when {
+                expression { return env.BUILD_ALLOWED == 'true' }
+                anyOf {
+                    branch pattern: '0.*', comparator: 'GLOB'
+                    branch 'staging'
+                    branch 'master'
+                }
+            }
+            steps {
+                sshagent(credentials: [env.SSH_CRED_ID]) {
+                    sh """
+                        ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} '
+                          set -e
+
+                          echo \"== Nodes ==\"
+                          sudo k3s kubectl get nodes -o wide
+
+                          echo \"== Core pods ==\"
+                          sudo k3s kubectl -n kube-system get pods -o wide
+
+                          echo \"== Ingress controller ==\"
+                          sudo k3s kubectl -n kube-system get deploy traefik
+                          sudo k3s kubectl -n kube-system rollout status deploy/traefik --timeout=120s
+
+                          echo \"== DNS ==\"
+                          sudo k3s kubectl -n kube-system get deploy coredns
+                          sudo k3s kubectl -n kube-system rollout status deploy/coredns --timeout=120s
+
+                          echo \"== Storage class ==\"
+                          sudo k3s kubectl get storageclass
+                        '
+                    """
+                }
+            }
+        }
+
+        stage('Preflight: registry reachable') {
+            agent any
+            when {
+                expression { return env.BUILD_ALLOWED == 'true' }
+                anyOf {
+                    branch pattern: '0.*', comparator: 'GLOB'
+                    branch 'staging'
+                    branch 'master'
+                }
+            }
+            steps {
+                sshagent(credentials: [env.SSH_CRED_ID]) {
+                    sh """
+                        ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} '
+                          set -e
+                          echo \"== Registry health ==\"
+                          curl -fsS http://${DEPLOY_HOST}:5000/v2/ >/dev/null && echo \"Registry OK\"
+
+                          echo \"== k3s registry config ==\"
+                          sudo test -f /etc/rancher/k3s/registries.yaml && echo \"registries.yaml OK\" || (echo \"Missing registries.yaml\" && exit 1)
+                        '
+                    """
+                }
+            }
+        }
+
+        stage('Preflight: image pull test') {
+            agent any
+            when {
+                expression { return env.BUILD_ALLOWED == 'true' }
+                anyOf {
+                    branch pattern: '0.*', comparator: 'GLOB'
+                    branch 'staging'
+                    branch 'master'
+                }
+            }
+            steps {
+                script {
+                    env.IMAGE_TAG = env.IMAGE_TAG ?: sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                }
+                sshagent(credentials: [env.SSH_CRED_ID]) {
+                    sh """
+                        cat <<EOF | ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} 'sudo k3s kubectl apply -f -'
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pulltest
+  namespace: dev
+spec:
+  restartPolicy: Never
+  containers:
+  - name: c
+    image: ${IMAGE_REPO}:${IMAGE_TAG}
+    command: [\"sh\",\"-c\",\"echo pulled && sleep 1\"]
+EOF
+                        ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} '
+                          set -e
+                          sudo k3s kubectl -n dev wait --for=condition=Ready pod/pulltest --timeout=120s || true
+                          sudo k3s kubectl -n dev describe pod pulltest
+                          sudo k3s kubectl -n dev delete pod pulltest --ignore-not-found
+                        '
+                    """
+                }
+            }
+        }
+
         stage('Deploy to dev-env-01') {
             agent any
             when {
+                expression { return env.BUILD_ALLOWED == 'true' }
                 branch pattern: '0.*', comparator: 'GLOB'
             }
             steps {
                 script {
                     env.IMAGE_TAG = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
                 }
-                sshagent(credentials: ['dev-env-ssh']) {
+                sshagent(credentials: [env.SSH_CRED_ID]) {
                     sh """
                         scp -r helm/dorfgefluester ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/dorfgefluester-chart
 
-                        ssh ${DEPLOY_USER}@${DEPLOY_HOST} '
+                        ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} '
                           set -e
                           sudo helm upgrade --install ${RELEASE} /tmp/dorfgefluester-chart \
                             --namespace dev --create-namespace \
                             --set image.repository=${IMAGE_REPO} \
                             --set image.tag=${IMAGE_TAG}
+                          sudo k3s kubectl -n dev rollout status deploy/${RELEASE} --timeout=180s
+                          sudo k3s kubectl -n dev get pods -o wide
                         '
                     """
                 }
@@ -316,45 +432,26 @@ pipeline {
         stage('Deploy to Staging') {
             agent any
             when {
+                expression { return env.BUILD_ALLOWED == 'true' }
                 branch 'staging'
             }
             steps {
                 script {
                     env.IMAGE_TAG = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
                 }
-                sshagent(credentials: ['dev-env-ssh']) {
+                sshagent(credentials: [env.SSH_CRED_ID]) {
                     sh """
                         scp -r helm/dorfgefluester ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/dorfgefluester-chart
 
                         ssh ${DEPLOY_USER}@${DEPLOY_HOST} '
                           set -e
                           sudo helm upgrade --install ${RELEASE} /tmp/dorfgefluester-chart \
-                            --namespace staging --create-namespace \
+                            --namespace ${STAGING_NAMESPACE} --create-namespace \
                             --set image.repository=${IMAGE_REPO} \
                             --set image.tag=${IMAGE_TAG}
+                          sudo k3s kubectl -n ${STAGING_NAMESPACE} rollout status deploy/${RELEASE} --timeout=180s
+                          sudo k3s kubectl -n ${STAGING_NAMESPACE} get pods -o wide
                         '
-                    """
-                }
-            }
-        }
-
-        stage('Deploy to k3s (Helm)') {
-            when {
-                expression { return env.BUILD_ALLOWED == 'true' && env.BRANCH_NAME == 'master' }
-            }
-            steps {
-                sshagent(credentials: ['dev-env-ssh']) {
-                    sh """
-                      scp -o StrictHostKeyChecking=no -r helm/dorfgefluester ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/dorfgefluester-chart
-                      ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} '
-                        set -e
-                        sudo helm upgrade --install ${RELEASE} /tmp/dorfgefluester-chart \
-                          --namespace ${NAMESPACE} --create-namespace \
-                          --set image.repository=${IMAGE_REPO} \
-                          --set image.tag=${IMAGE_TAG} \
-                          --set ingress.host=dorf.test
-                        sudo k3s kubectl -n ${NAMESPACE} rollout status deploy/${RELEASE} --timeout=180s
-                      '
                     """
                 }
             }
@@ -363,14 +460,29 @@ pipeline {
         stage('Deploy to Production') {
             agent any
             when {
+                expression { return env.BUILD_ALLOWED == 'true' }
                 branch 'master'
             }
             steps {
-                input message: 'Deploy to production?', ok: 'Deploy'
-                sh '''
-                echo "Deploying to production environment..."
-                # Add production deployment commands here
-                '''
+                input message: "Deploy ${env.IMAGE_TAG ?: 'current build'} to production?", ok: 'Deploy'
+                script {
+                    env.IMAGE_TAG = env.IMAGE_TAG ?: sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                }
+                sshagent(credentials: [env.SSH_CRED_ID]) {
+                    sh """
+                        scp -r helm/dorfgefluester ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/dorfgefluester-chart
+
+                        ssh ${DEPLOY_USER}@${DEPLOY_HOST} '
+                          set -e
+                          sudo helm upgrade --install ${RELEASE} /tmp/dorfgefluester-chart \
+                            --namespace ${PROD_NAMESPACE} --create-namespace \
+                            --set image.repository=${IMAGE_REPO} \
+                            --set image.tag=${IMAGE_TAG}
+                          sudo k3s kubectl -n ${PROD_NAMESPACE} rollout status deploy/${RELEASE} --timeout=180s
+                          sudo k3s kubectl -n ${PROD_NAMESPACE} get pods -o wide
+                        '
+                    """
+                }
             }
         }
     }
