@@ -18,14 +18,8 @@ pipeline {
         BUILD_ALLOWED = 'true'
         REGISTRY = 'dev-env-01:5000'
         IMAGE_REPO = "${REGISTRY}/dorfgefluester"
-        DEPLOY_HOST = 'dev-env-01'
-        DEPLOY_USER = 'deploy'
-        SSH_CRED_ID = 'dev-env-01-ssh'
         NAMESPACE = 'dev'
         RELEASE = 'dorfgefluester'
-        JENKINS_URL = 'http://jenkins/'
-        STAGING_NAMESPACE = 'staging'
-        PROD_NAMESPACE = 'production'
     }
 
     stages {
@@ -224,59 +218,6 @@ pipeline {
             }
         }
 
-        stage('Gate: Latest Version Build Success') {
-            when {
-                expression { return env.BUILD_ALLOWED == 'true' && env.BRANCH_NAME == 'master' }
-            }
-            steps {
-                script {
-                    def credId = scm.userRemoteConfigs[0].credentialsId
-                    def latest = ''
-                    withCredentials([gitUsernamePassword(credentialsId: credId, gitToolName: 'Default')]) {
-                        latest = sh(
-                            script: 'git ls-remote --heads origin | awk \'{print $2}\' | sed \'s#refs/heads/##\' | grep -E \'^[0-9]+\\.[0-9]+\\.[0-9]+$\' | sort -V | tail -n 1',
-                            returnStdout: true
-                        ).trim()
-                    }
-                    if (!latest) {
-                        error('No version branches found; cannot gate master deploy.')
-                    }
-
-                    def jobParts = env.JOB_NAME.tokenize('/')
-                    if (jobParts.size() < 2) {
-                        error("Unexpected JOB_NAME format: ${env.JOB_NAME}")
-                    }
-
-                    def rootParts = jobParts[0..-2]
-                    def rootPath = rootParts.collect { "job/${it}" }.join('/')
-                    def latestPath = (rootParts + [latest]).collect { "job/${it}" }.join('/')
-                    def baseUrl = env.JENKINS_URL ?: ''
-                    if (!baseUrl) {
-                        error('JENKINS_URL is not set; cannot check latest version build status.')
-                    }
-
-                    def url = "${baseUrl}${latestPath}/lastBuild/api/json"
-                    def jsonText = sh(
-                        script: "curl -sf '${url}'",
-                        returnStdout: true
-                    ).trim()
-
-                    def parsed = new groovy.json.JsonSlurperClassic().parseText(jsonText)
-                    def result = (parsed?.result ?: 'UNKNOWN').toString().trim()
-
-                    if (!result) {
-                        result = 'UNKNOWN'
-                    }
-
-                    if (result != 'SUCCESS') {
-                        error("Latest version branch ${latest} build status is ${result}; blocking master deploy.")
-                    }
-
-                    echo "Latest version branch ${latest} is SUCCESS; master deploy allowed."
-                }
-            }
-        }
-
         stage('Build Image') {
             when {
                 expression { return env.BUILD_ALLOWED == 'true' }
@@ -290,214 +231,16 @@ pipeline {
                 script {
                     env.IMAGE_TAG = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
                 }
-                sshagent(credentials: [env.SSH_CRED_ID]) {
-                    sh """
-                      set -e
-                      docker build -t ${IMAGE_REPO}:${IMAGE_TAG} .
-                      if docker push ${IMAGE_REPO}:${IMAGE_TAG}; then
-                        echo 'Pushed image from Jenkins agent.'
-                      else
-                        echo 'Direct push failed; falling back to push via ${DEPLOY_HOST}.'
-                        docker save ${IMAGE_REPO}:${IMAGE_TAG} | gzip > /tmp/${RELEASE}-${IMAGE_TAG}.tar.gz
-                        scp -o StrictHostKeyChecking=no /tmp/${RELEASE}-${IMAGE_TAG}.tar.gz ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/
-                        ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} '
-                          set -e
-                          gunzip -c /tmp/${RELEASE}-${IMAGE_TAG}.tar.gz | sudo docker load
-                          sudo docker push ${IMAGE_REPO}:${IMAGE_TAG}
-                          rm -f /tmp/${RELEASE}-${IMAGE_TAG}.tar.gz
-                        '
-                        rm -f /tmp/${RELEASE}-${IMAGE_TAG}.tar.gz
-                      fi
-                    """
-                }
+                sh """
+                  set -e
+                  docker build -t ${IMAGE_REPO}:${IMAGE_TAG} .
+                  docker push ${IMAGE_REPO}:${IMAGE_TAG}
+                """
             }
-        }
-
-        stage('Preflight: k3s ready') {
-            agent any
-            when {
-                expression { return env.BUILD_ALLOWED == 'true' }
-                anyOf {
-                    branch pattern: '0.*', comparator: 'GLOB'
-                    branch 'staging'
-                    branch 'master'
-                }
-            }
-            steps {
-                sshagent(credentials: [env.SSH_CRED_ID]) {
-                    sh """
-                        ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} '
-                          set -e
-
-                          echo \"== Nodes ==\"
-                          sudo k3s kubectl get nodes -o wide
-
-                          echo \"== Core pods ==\"
-                          sudo k3s kubectl -n kube-system get pods -o wide
-
-                          echo \"== Ingress controller ==\"
-                          sudo k3s kubectl -n kube-system get deploy traefik
-                          sudo k3s kubectl -n kube-system rollout status deploy/traefik --timeout=120s
-
-                          echo \"== DNS ==\"
-                          sudo k3s kubectl -n kube-system get deploy coredns
-                          sudo k3s kubectl -n kube-system rollout status deploy/coredns --timeout=120s
-
-                          echo \"== Storage class ==\"
-                          sudo k3s kubectl get storageclass
-                        '
-                    """
-                }
-            }
-        }
-
-        stage('Preflight: registry reachable') {
-            agent any
-            when {
-                expression { return env.BUILD_ALLOWED == 'true' }
-                anyOf {
-                    branch pattern: '0.*', comparator: 'GLOB'
-                    branch 'staging'
-                    branch 'master'
-                }
-            }
-            steps {
-                sshagent(credentials: [env.SSH_CRED_ID]) {
-                    sh """
-                        ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} '
-                          set -e
-                          echo \"== Registry health ==\"
-                          curl -fsS http://${DEPLOY_HOST}:5000/v2/ >/dev/null && echo \"Registry OK\"
-
-                          echo \"== k3s registry config ==\"
-                          sudo test -f /etc/rancher/k3s/registries.yaml && echo \"registries.yaml OK\" || (echo \"Missing registries.yaml\" && exit 1)
-                        '
-                    """
-                }
-            }
-        }
-
-        stage('Preflight: image pull test') {
-            agent any
-            when {
-                expression { return env.BUILD_ALLOWED == 'true' }
-                anyOf {
-                    branch pattern: '0.*', comparator: 'GLOB'
-                    branch 'staging'
-                    branch 'master'
-                }
-            }
-            steps {
-                script {
-                    env.IMAGE_TAG = env.IMAGE_TAG ?: sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
-                }
-                sshagent(credentials: [env.SSH_CRED_ID]) {
-                    sh """
-                        cat <<EOF | ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} 'sudo k3s kubectl apply -f -'
-apiVersion: v1
-kind: Pod
-metadata:
-  name: pulltest
-  namespace: dev
-spec:
-  restartPolicy: Never
-  containers:
-  - name: c
-    image: ${IMAGE_REPO}:${IMAGE_TAG}
-    command: [\"sh\",\"-c\",\"echo pulled && sleep 1\"]
-EOF
-                        ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} '
-                          set -e
-                          sudo k3s kubectl -n dev wait --for=condition=Ready pod/pulltest --timeout=120s || true
-                          sudo k3s kubectl -n dev describe pod pulltest
-                          sudo k3s kubectl -n dev delete pod pulltest --ignore-not-found
-                        '
-                    """
-                }
-            }
-        }
-
-        stage('Deploy to dev-env-01') {
-            agent any
-            when {
-                expression { return env.BUILD_ALLOWED == 'true' }
-                branch pattern: '0.*', comparator: 'GLOB'
-            }
-            steps {
-                script {
-                    env.IMAGE_TAG = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
-                }
-                sshagent(credentials: [env.SSH_CRED_ID]) {
-                    sh """
-                        scp -r helm/dorfgefluester ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/dorfgefluester-chart
-
-                        ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} '
-                          set -e
-                          sudo helm upgrade --install ${RELEASE} /tmp/dorfgefluester-chart \
-                            --namespace dev --create-namespace \
-                            --set image.repository=${IMAGE_REPO} \
-                            --set image.tag=${IMAGE_TAG}
-                          sudo k3s kubectl -n dev rollout status deploy/${RELEASE} --timeout=180s
-                          sudo k3s kubectl -n dev get pods -o wide
-                        '
-                    """
-                }
-            }
-        }
-
-        stage('Deploy to Staging') {
-            agent any
-            when {
-                expression { return env.BUILD_ALLOWED == 'true' }
-                branch 'staging'
-            }
-            steps {
-                script {
-                    env.IMAGE_TAG = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
-                }
-                sshagent(credentials: [env.SSH_CRED_ID]) {
-                    sh """
-                        scp -r helm/dorfgefluester ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/dorfgefluester-chart
-
-                        ssh ${DEPLOY_USER}@${DEPLOY_HOST} '
-                          set -e
-                          sudo helm upgrade --install ${RELEASE} /tmp/dorfgefluester-chart \
-                            --namespace ${STAGING_NAMESPACE} --create-namespace \
-                            --set image.repository=${IMAGE_REPO} \
-                            --set image.tag=${IMAGE_TAG}
-                          sudo k3s kubectl -n ${STAGING_NAMESPACE} rollout status deploy/${RELEASE} --timeout=180s
-                          sudo k3s kubectl -n ${STAGING_NAMESPACE} get pods -o wide
-                        '
-                    """
-                }
-            }
-        }
-
-        stage('Deploy to Production') {
-            agent any
-            when {
-                expression { return env.BUILD_ALLOWED == 'true' }
-                branch 'master'
-            }
-            steps {
-                input message: "Deploy ${env.IMAGE_TAG ?: 'current build'} to production?", ok: 'Deploy'
-                script {
-                    env.IMAGE_TAG = env.IMAGE_TAG ?: sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
-                }
-                sshagent(credentials: [env.SSH_CRED_ID]) {
-                    sh """
-                        scp -r helm/dorfgefluester ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/dorfgefluester-chart
-
-                        ssh ${DEPLOY_USER}@${DEPLOY_HOST} '
-                          set -e
-                          sudo helm upgrade --install ${RELEASE} /tmp/dorfgefluester-chart \
-                            --namespace ${PROD_NAMESPACE} --create-namespace \
-                            --set image.repository=${IMAGE_REPO} \
-                            --set image.tag=${IMAGE_TAG}
-                          sudo k3s kubectl -n ${PROD_NAMESPACE} rollout status deploy/${RELEASE} --timeout=180s
-                          sudo k3s kubectl -n ${PROD_NAMESPACE} get pods -o wide
-                        '
-                    """
+            post {
+                success {
+                    echo "Image published: ${IMAGE_REPO}:${IMAGE_TAG}"
+                    echo "Use dedicated deploy pipelines for environment rollout (e.g. jenkins/*-deploy.Jenkinsfile)."
                 }
             }
         }
