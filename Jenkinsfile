@@ -261,8 +261,12 @@ pipeline {
                                 // Scan the repository filesystem for high/critical issues without failing the pipeline.
                                 'Trivy FS Scan': {
                                     sh '''
-                                        docker run --rm -u "$(id -u):$(id -g)" -v "$WORKSPACE:/src" \
+                                        mkdir -p "$WORKSPACE/.trivy-cache"
+                                        docker run --rm -u "$(id -u):$(id -g)" \
+                                          -v "$WORKSPACE:/src" \
+                                          -v "$WORKSPACE/.trivy-cache:/tmp/trivy-cache" \
                                           aquasec/trivy fs /src \
+                                          --cache-dir /tmp/trivy-cache \
                                           --exit-code 0 --severity HIGH,CRITICAL --ignore-unfixed || true
                                     '''
                                 },
@@ -383,9 +387,9 @@ pipeline {
                             }
                             env.GIT_SHA = resolvedTag
                             env.IMAGE_TAG = resolvedTag
-                            echo "Using image tag ${env.IMAGE_TAG}."
+                            echo "Using image tag ${resolvedTag}."
+                            sh "docker build -t ${IMAGE_REPO}:${resolvedTag} ."
                         }
-                        sh 'docker build -t ${IMAGE_REPO}:${IMAGE_TAG} .'
                     }
                 }
 
@@ -393,12 +397,22 @@ pipeline {
                 stage('Scan Docker Image') {
                     steps {
                         catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                            sh '''
-                                docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-                                  aquasec/trivy image \
-                                  --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed \
-                                  "$IMAGE_REPO:$IMAGE_TAG"
-                            '''
+                            script {
+                                def imageTag = env.IMAGE_TAG?.trim()
+                                if (!imageTag || imageTag == 'null') {
+                                    sh 'git config --global --add safe.directory "$WORKSPACE"'
+                                    imageTag = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                                }
+                                if (!imageTag || imageTag == 'null') {
+                                    error('Unable to resolve IMAGE_TAG for image scan.')
+                                }
+                                sh """
+                                    docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+                                      aquasec/trivy image \
+                                      --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed \
+                                      "${IMAGE_REPO}:${imageTag}"
+                                """
+                            }
                         }
                     }
                 }
@@ -407,12 +421,21 @@ pipeline {
                 stage('Push Docker Image') {
                     steps {
                         script {
-                            def directPushStatus = sh(script: 'docker push ${IMAGE_REPO}:${IMAGE_TAG}', returnStatus: true)
+                            def imageTag = env.IMAGE_TAG?.trim()
+                            if (!imageTag || imageTag == 'null') {
+                                sh 'git config --global --add safe.directory "$WORKSPACE"'
+                                imageTag = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                            }
+                            if (!imageTag || imageTag == 'null') {
+                                error('Unable to resolve IMAGE_TAG for docker push.')
+                            }
+                            env.IMAGE_TAG = imageTag
+                            def directPushStatus = sh(script: "docker push ${IMAGE_REPO}:${imageTag}", returnStatus: true)
                             if (directPushStatus == 0) {
                                 echo 'Image pushed directly from Jenkins agent.'
                             } else {
                                 echo "Direct push failed (likely insecure registry/TLS mismatch). Falling back to push via ${DEPLOY_HOST}."
-                                def imageArchive = "/tmp/${RELEASE}-${IMAGE_TAG}.tar.gz"
+                                def imageArchive = "/tmp/${RELEASE}-${imageTag}.tar.gz"
                                 def sshCredCandidates = [env.SSH_CRED_ID, 'deploy'].findAll { it?.trim() }.unique()
                                 def pushedViaSsh = false
                                 def lastSshError = null
@@ -421,7 +444,7 @@ pipeline {
                                         withCredentials([sshUserPrivateKey(credentialsId: credId, keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
                                             sh """
                                               set -e
-                                              docker save ${IMAGE_REPO}:${IMAGE_TAG} | gzip > ${imageArchive}
+                                              docker save ${IMAGE_REPO}:${imageTag} | gzip > ${imageArchive}
                                               scp -i "\$SSH_KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no ${imageArchive} \$SSH_USER@${DEPLOY_HOST}:/tmp/
                                               ssh -i "\$SSH_KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no \$SSH_USER@${DEPLOY_HOST} '
                                                 set -e
@@ -435,7 +458,7 @@ pipeline {
                                                   exit 1
                                                 fi
                                                 gunzip -c \$IMAGE_ARCHIVE | \$DOCKER_CMD load
-                                                \$DOCKER_CMD push ${IMAGE_REPO}:${IMAGE_TAG}
+                                                \$DOCKER_CMD push ${IMAGE_REPO}:${imageTag}
                                                 rm -f \$IMAGE_ARCHIVE
                                               '
                                               rm -f ${imageArchive}
@@ -461,6 +484,17 @@ pipeline {
                 // Archive build metadata so downstream deploy jobs can consume image details reliably.
                 stage('Archive Build Metadata') {
                     steps {
+                        script {
+                            def imageTag = env.IMAGE_TAG?.trim()
+                            if (!imageTag || imageTag == 'null') {
+                                sh 'git config --global --add safe.directory "$WORKSPACE"'
+                                imageTag = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                            }
+                            if (!imageTag || imageTag == 'null') {
+                                error('Unable to resolve IMAGE_TAG for build metadata.')
+                            }
+                            env.IMAGE_TAG = imageTag
+                        }
                         sh """
                           cat > build-meta.json <<EOF
                           {
