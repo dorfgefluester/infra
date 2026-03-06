@@ -232,34 +232,30 @@ pipeline {
 
                 // Execute independent security scans in parallel so one slow scan does not block others.
                 stage('Security Scans') {
-                    parallel {
-                        // Scan the repository filesystem for high/critical issues without failing the pipeline.
-                        stage('Trivy FS Scan') {
-                            steps {
-                                sh '''
-                                    docker run --rm -v "$WORKSPACE:/src" \
-                                      aquasec/trivy fs /src \
-                                      --exit-code 0 --severity HIGH,CRITICAL --ignore-unfixed || true
-                                '''
-                            }
-                        }
-
-                        // Run Semgrep SAST ruleset for fast pattern-based vulnerability detection.
-                        stage('Semgrep') {
-                            steps {
-                                sh '''
-                                    docker run --rm -v "$WORKSPACE:/src" \
-                                      returntocorp/semgrep semgrep scan /src \
-                                      --config auto --error || true
-                                '''
-                            }
-                        }
-
-                        // Run npm audit as a dependency-risk signal while keeping delivery non-blocking.
-                        stage('npm Audit') {
-                            steps {
-                                sh 'npm audit --audit-level=high || true'
-                            }
+                    steps {
+                        script {
+                            parallel(
+                                // Scan the repository filesystem for high/critical issues without failing the pipeline.
+                                'Trivy FS Scan': {
+                                    sh '''
+                                        docker run --rm -v "$WORKSPACE:/src" \
+                                          aquasec/trivy fs /src \
+                                          --exit-code 0 --severity HIGH,CRITICAL --ignore-unfixed || true
+                                    '''
+                                },
+                                // Run Semgrep SAST ruleset for fast pattern-based vulnerability detection.
+                                'Semgrep': {
+                                    sh '''
+                                        docker run --rm -v "$WORKSPACE:/src" \
+                                          returntocorp/semgrep semgrep scan /src \
+                                          --config auto --error || true
+                                    '''
+                                },
+                                // Run npm audit as a dependency-risk signal while keeping delivery non-blocking.
+                                'npm Audit': {
+                                    sh 'npm audit --audit-level=high || true'
+                                }
+                            )
                         }
                     }
                 }
