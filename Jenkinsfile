@@ -107,12 +107,19 @@ pipeline {
                                     sleep time: waitSeconds, unit: 'SECONDS'
                                 }
                             }
-                            env.GIT_SHA = env.GIT_COMMIT?.take(7)
-                            if (!env.GIT_SHA?.trim()) {
-                                sh 'git config --global --add safe.directory "$WORKSPACE"'
-                                env.GIT_SHA = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                            def resolvedSha = env.GIT_COMMIT?.trim()
+                            if (resolvedSha && resolvedSha != 'null') {
+                                resolvedSha = resolvedSha.take(7)
                             }
-                            env.IMAGE_TAG = env.GIT_SHA
+                            if (!resolvedSha || resolvedSha == 'null') {
+                                sh 'git config --global --add safe.directory "$WORKSPACE"'
+                                resolvedSha = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                            }
+                            if (!resolvedSha || resolvedSha == 'null') {
+                                error('Unable to resolve GIT_SHA during checkout.')
+                            }
+                            env.GIT_SHA = resolvedSha
+                            env.IMAGE_TAG = resolvedSha
                         }
                     }
                 }
@@ -238,7 +245,7 @@ pipeline {
                                         -Dsonar.sources=. \
                                         -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/tests/**,**/coverage/** \
                                         -Dsonar.javascript.lcov.reportPaths=tests/coverage/lcov.info \
-                                        -Dsonar.scanner.metadataFilePath=report-task.txt \
+                                        -Dsonar.scanner.metadataFilePath=/usr/src/report-task.txt \
                                         -Dsonar.host.url="$SONAR_HOST_URL"
                                 '''
                             }
@@ -360,15 +367,18 @@ pipeline {
                 stage('Build Docker Image') {
                     steps {
                         script {
+                            def isUnset = { value ->
+                                return !value?.trim() || value.trim() == 'null'
+                            }
                             def resolvedTag = env.IMAGE_TAG?.trim()
-                            if (!resolvedTag && env.GIT_COMMIT?.trim()) {
+                            if (isUnset(resolvedTag) && !isUnset(env.GIT_COMMIT)) {
                                 resolvedTag = env.GIT_COMMIT.take(7)
                             }
-                            if (!resolvedTag) {
+                            if (isUnset(resolvedTag)) {
                                 sh 'git config --global --add safe.directory "$WORKSPACE"'
                                 resolvedTag = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
                             }
-                            if (!resolvedTag) {
+                            if (isUnset(resolvedTag)) {
                                 error('Unable to resolve IMAGE_TAG from GIT_COMMIT or git rev-parse.')
                             }
                             env.GIT_SHA = resolvedTag
