@@ -36,10 +36,12 @@ pipeline {
                         def repoUrl = scm.userRemoteConfigs[0].url
                         def latest = ''
                         withCredentials([gitUsernamePassword(credentialsId: credId, gitToolName: 'Default')]) {
-                            latest = sh(
-                                script: "git ls-remote --heads '${repoUrl}' | cut -f2 | sed 's#refs/heads/##' | grep -E -x '[0-9]+\\.[0-9]+\\.[0-9]+' | sort -V | tail -n 1",
-                                returnStdout: true
-                            ).trim()
+                            retry(3) {
+                                latest = sh(
+                                    script: "git ls-remote --heads '${repoUrl}' | cut -f2 | sed 's#refs/heads/##' | grep -E -x '[0-9]+\\.[0-9]+\\.[0-9]+' | sort -V | tail -n 1",
+                                    returnStdout: true
+                                ).trim()
+                            }
                         }
                         env.LATEST_VERSION_BRANCH = latest
                         if (env.BRANCH_NAME != latest) {
@@ -61,7 +63,22 @@ pipeline {
                 expression { return env.BUILD_ALLOWED == 'true' }
             }
             steps {
-                checkout scm
+                script {
+                    for (int attempt = 1; attempt <= 3; attempt++) {
+                        try {
+                            checkout scm
+                            break
+                        } catch (err) {
+                            if (attempt == 3) {
+                                throw err
+                            }
+                            int waitSeconds = 10 * attempt
+                            echo "Checkout attempt ${attempt} failed: ${err.getMessage()}"
+                            echo "Retrying checkout in ${waitSeconds}s..."
+                            sleep time: waitSeconds, unit: 'SECONDS'
+                        }
+                    }
+                }
                 sh 'git rev-parse --short HEAD'
             }
         }
