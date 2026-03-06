@@ -22,7 +22,7 @@ pipeline {
         IMAGE_REPO = "${REGISTRY}/${IMAGE_NAME}"
         DEPLOY_HOST = 'dev-env-01'
         DEPLOY_USER = 'deploy'
-        SSH_CRED_ID = 'dev-env-01-ssh'
+        SSH_CRED_ID = 'deploy'
         NAMESPACE = 'dev'
         RELEASE = 'dorfgefluester'
         BUILD_ALLOWED = 'true'
@@ -434,9 +434,25 @@ pipeline {
                             if (directPushStatus == 0) {
                                 echo 'Image pushed directly from Jenkins agent.'
                             } else {
-                                echo "Direct push failed (likely insecure registry/TLS mismatch). Falling back to push via ${DEPLOY_HOST}."
+                                echo "Direct push failed (likely insecure registry/TLS mismatch). Trying skopeo HTTP push."
+                                def skopeoPushStatus = sh(
+                                    script: """
+                                      docker run --rm \
+                                        -v /var/run/docker.sock:/var/run/docker.sock \
+                                        quay.io/skopeo/stable:latest \
+                                        copy --dest-tls-verify=false \
+                                        docker-daemon:${IMAGE_REPO}:${imageTag} \
+                                        docker://${IMAGE_REPO}:${imageTag}
+                                    """,
+                                    returnStatus: true
+                                )
+                                if (skopeoPushStatus == 0) {
+                                    echo 'Image pushed from Jenkins agent using skopeo HTTP fallback.'
+                                    return
+                                }
+                                echo "Skopeo HTTP push failed. Falling back to push via ${DEPLOY_HOST}."
                                 def imageArchive = "/tmp/${RELEASE}-${imageTag}.tar.gz"
-                                def sshCredCandidates = [env.SSH_CRED_ID, 'deploy'].findAll { it?.trim() }.unique()
+                                def sshCredCandidates = [env.SSH_CRED_ID, 'dev-env-01-ssh', 'deploy'].findAll { it?.trim() }.unique()
                                 def pushedViaSsh = false
                                 def lastSshError = null
                                 for (def credId : sshCredCandidates) {
@@ -453,8 +469,13 @@ pipeline {
                                                   DOCKER_CMD="docker"
                                                 elif sudo -n docker info >/dev/null 2>&1; then
                                                   DOCKER_CMD="sudo docker"
+                                                elif sudo -n k3s ctr version >/dev/null 2>&1; then
+                                                  gunzip -c \$IMAGE_ARCHIVE | sudo -n k3s ctr -n k8s.io images import -
+                                                  sudo -n k3s ctr -n k8s.io images push --plain-http ${IMAGE_REPO}:${imageTag}
+                                                  rm -f \$IMAGE_ARCHIVE
+                                                  exit 0
                                                 else
-                                                  echo "Docker is not available for user \$USER on ${DEPLOY_HOST}."
+                                                  echo "Neither docker nor k3s ctr is available for user \$USER on ${DEPLOY_HOST}."
                                                   exit 1
                                                 fi
                                                 gunzip -c \$IMAGE_ARCHIVE | \$DOCKER_CMD load
