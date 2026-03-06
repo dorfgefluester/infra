@@ -269,7 +269,7 @@ pipeline {
                                 },
                                 // Run npm audit as a dependency-risk signal while keeping delivery non-blocking.
                                 'npm Audit': {
-                                    sh 'npm audit --audit-level=high || true'
+                                    sh 'npm audit --audit-level=high --package-lock-only || true'
                                 }
                             )
                         }
@@ -403,28 +403,45 @@ pipeline {
                             } else {
                                 echo "Direct push failed (likely insecure registry/TLS mismatch). Falling back to push via ${DEPLOY_HOST}."
                                 def imageArchive = "/tmp/${RELEASE}-${IMAGE_TAG}.tar.gz"
-                                sshagent(credentials: [env.SSH_CRED_ID]) {
-                                    sh """
-                                      set -e
-                                      docker save ${IMAGE_REPO}:${IMAGE_TAG} | gzip > ${imageArchive}
-                                      scp -o StrictHostKeyChecking=no ${imageArchive} ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/
-                                      ssh -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} '
-                                        set -e
-                                        IMAGE_ARCHIVE=${imageArchive}
-                                        if docker info >/dev/null 2>&1; then
-                                          DOCKER_CMD="docker"
-                                        elif sudo -n docker info >/dev/null 2>&1; then
-                                          DOCKER_CMD="sudo docker"
-                                        else
-                                          echo "Docker is not available for user ${DEPLOY_USER} on ${DEPLOY_HOST}."
-                                          exit 1
-                                        fi
-                                        gunzip -c \$IMAGE_ARCHIVE | \$DOCKER_CMD load
-                                        \$DOCKER_CMD push ${IMAGE_REPO}:${IMAGE_TAG}
-                                        rm -f \$IMAGE_ARCHIVE
-                                      '
-                                      rm -f ${imageArchive}
-                                    """
+                                def sshCredCandidates = [env.SSH_CRED_ID, 'deploy'].findAll { it?.trim() }.unique()
+                                def pushedViaSsh = false
+                                def lastSshError = null
+                                for (def credId : sshCredCandidates) {
+                                    try {
+                                        withCredentials([sshUserPrivateKey(credentialsId: credId, keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
+                                            sh """
+                                              set -e
+                                              docker save ${IMAGE_REPO}:${IMAGE_TAG} | gzip > ${imageArchive}
+                                              scp -i "\$SSH_KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no ${imageArchive} \$SSH_USER@${DEPLOY_HOST}:/tmp/
+                                              ssh -i "\$SSH_KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no \$SSH_USER@${DEPLOY_HOST} '
+                                                set -e
+                                                IMAGE_ARCHIVE=${imageArchive}
+                                                if docker info >/dev/null 2>&1; then
+                                                  DOCKER_CMD="docker"
+                                                elif sudo -n docker info >/dev/null 2>&1; then
+                                                  DOCKER_CMD="sudo docker"
+                                                else
+                                                  echo "Docker is not available for user \$USER on ${DEPLOY_HOST}."
+                                                  exit 1
+                                                fi
+                                                gunzip -c \$IMAGE_ARCHIVE | \$DOCKER_CMD load
+                                                \$DOCKER_CMD push ${IMAGE_REPO}:${IMAGE_TAG}
+                                                rm -f \$IMAGE_ARCHIVE
+                                              '
+                                              rm -f ${imageArchive}
+                                            """
+                                        }
+                                        env.SSH_CRED_ID = credId
+                                        echo "Image pushed via SSH using credential '${credId}'."
+                                        pushedViaSsh = true
+                                        break
+                                    } catch (err) {
+                                        lastSshError = err
+                                        echo "SSH push fallback failed with credential '${credId}': ${err.getMessage()}"
+                                    }
+                                }
+                                if (!pushedViaSsh) {
+                                    throw lastSshError ?: new RuntimeException('SSH push fallback failed for all configured credentials.')
                                 }
                             }
                         }
