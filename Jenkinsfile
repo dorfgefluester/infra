@@ -261,28 +261,45 @@ pipeline {
                         echo 'Image pushed directly from Jenkins agent.'
                     } else {
                         echo "Direct push failed (likely insecure registry/TLS mismatch). Falling back to push via ${DEPLOY_HOST}."
+                        def sshCredentialCandidates = [env.SSH_CRED_ID, 'jenkins-ssh-key']
+                            .findAll { it?.trim() }
+                            .unique()
+                        def pushedViaFallback = false
 
-                        withCredentials([sshUserPrivateKey(credentialsId: env.SSH_CRED_ID, keyFileVariable: 'SSH_KEY')]) {
-                            sh """
-                              set -e
-                              docker save ${IMAGE_REPO}:${IMAGE_TAG} | gzip > /tmp/${RELEASE}-${IMAGE_TAG}.tar.gz
-                              scp -i "${SSH_KEY}" -o StrictHostKeyChecking=no /tmp/${RELEASE}-${IMAGE_TAG}.tar.gz ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/
-                              ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} '
-                                set -e
-                                if docker info >/dev/null 2>&1; then
-                                  DOCKER_CMD="docker"
-                                elif sudo -n docker info >/dev/null 2>&1; then
-                                  DOCKER_CMD="sudo docker"
-                                else
-                                  echo "Docker is not available for user ${DEPLOY_USER} on ${DEPLOY_HOST}."
-                                  exit 1
-                                fi
-                                gunzip -c /tmp/${RELEASE}-${IMAGE_TAG}.tar.gz | \$DOCKER_CMD load
-                                \$DOCKER_CMD push ${IMAGE_REPO}:${IMAGE_TAG}
-                                rm -f /tmp/${RELEASE}-${IMAGE_TAG}.tar.gz
-                              '
-                              rm -f /tmp/${RELEASE}-${IMAGE_TAG}.tar.gz
-                            """
+                        for (credId in sshCredentialCandidates) {
+                            try {
+                                echo "Trying fallback push with SSH credential: ${credId}"
+                                withCredentials([sshUserPrivateKey(credentialsId: credId, keyFileVariable: 'SSH_KEY')]) {
+                                    sh """
+                                      set -e
+                                      docker save ${IMAGE_REPO}:${IMAGE_TAG} | gzip > /tmp/${RELEASE}-${IMAGE_TAG}.tar.gz
+                                      scp -i "${SSH_KEY}" -o StrictHostKeyChecking=no /tmp/${RELEASE}-${IMAGE_TAG}.tar.gz ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/
+                                      ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} '
+                                        set -e
+                                        if docker info >/dev/null 2>&1; then
+                                          DOCKER_CMD="docker"
+                                        elif sudo -n docker info >/dev/null 2>&1; then
+                                          DOCKER_CMD="sudo docker"
+                                        else
+                                          echo "Docker is not available for user ${DEPLOY_USER} on ${DEPLOY_HOST}."
+                                          exit 1
+                                        fi
+                                        gunzip -c /tmp/${RELEASE}-${IMAGE_TAG}.tar.gz | \$DOCKER_CMD load
+                                        \$DOCKER_CMD push ${IMAGE_REPO}:${IMAGE_TAG}
+                                        rm -f /tmp/${RELEASE}-${IMAGE_TAG}.tar.gz
+                                      '
+                                      rm -f /tmp/${RELEASE}-${IMAGE_TAG}.tar.gz
+                                    """
+                                }
+                                pushedViaFallback = true
+                                break
+                            } catch (err) {
+                                echo "Fallback push failed with credential '${credId}': ${err.getMessage()}"
+                            }
+                        }
+
+                        if (!pushedViaFallback) {
+                            error("Direct image push failed and fallback push could not authenticate. Tried credentials: ${sshCredentialCandidates.join(', ')}")
                         }
                     }
                 }
