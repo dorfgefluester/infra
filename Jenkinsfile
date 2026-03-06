@@ -72,7 +72,7 @@ pipeline {
             agent {
                 docker {
                     image "node:${NODE_VERSION}"
-                    args '-u root:root'
+                    args "-u root:root --entrypoint=''"
                 }
             }
             stages {
@@ -94,7 +94,11 @@ pipeline {
                                     sleep time: waitSeconds, unit: 'SECONDS'
                                 }
                             }
-                            env.GIT_SHA = env.GIT_COMMIT?.take(7) ?: sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                            env.GIT_SHA = env.GIT_COMMIT?.take(7)
+                            if (!env.GIT_SHA?.trim()) {
+                                sh 'git config --global --add safe.directory "$WORKSPACE"'
+                                env.GIT_SHA = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                            }
                             env.IMAGE_TAG = env.GIT_SHA
                         }
                     }
