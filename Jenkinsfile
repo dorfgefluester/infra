@@ -28,7 +28,6 @@ pipeline {
         BUILD_ALLOWED = 'true'
         GIT_SHA = ''
         IMAGE_TAG = ''
-        SONAR_ANALYSIS_DONE = 'false'
     }
 
     stages {
@@ -64,6 +63,19 @@ pipeline {
             }
         }
 
+        // Reset workspace contents before checkout to recover from stale root-owned files across runs.
+        stage('Prepare Workspace') {
+            when {
+                expression { return env.BUILD_ALLOWED == 'true' }
+            }
+            steps {
+                sh '''
+                    docker run --rm -u root:root -v "$WORKSPACE:/ws" node:20 \
+                      sh -lc 'find /ws -mindepth 1 -maxdepth 1 -exec rm -rf {} +'
+                '''
+            }
+        }
+
         // Run compile, lint, tests, and optional E2E in a Node 20 container for parity across projects.
         stage('CI') {
             when {
@@ -72,7 +84,7 @@ pipeline {
             agent {
                 docker {
                     image "node:${NODE_VERSION}"
-                    args "-u root:root --entrypoint=''"
+                    args "--entrypoint=''"
                     reuseNode true
                 }
             }
@@ -215,6 +227,7 @@ pipeline {
                             withSonarQubeEnv('SonarQube') {
                                 sh '''
                                     docker run --rm \
+                                      -u "$(id -u):$(id -g)" \
                                       -e SONAR_HOST_URL="$SONAR_HOST_URL" \
                                       -e SONAR_TOKEN="$SONAR_AUTH_TOKEN" \
                                       -v "$WORKSPACE:/usr/src" \
@@ -241,7 +254,7 @@ pipeline {
                                 // Scan the repository filesystem for high/critical issues without failing the pipeline.
                                 'Trivy FS Scan': {
                                     sh '''
-                                        docker run --rm -v "$WORKSPACE:/src" \
+                                        docker run --rm -u "$(id -u):$(id -g)" -v "$WORKSPACE:/src" \
                                           aquasec/trivy fs /src \
                                           --exit-code 0 --severity HIGH,CRITICAL --ignore-unfixed || true
                                     '''
@@ -249,7 +262,7 @@ pipeline {
                                 // Run Semgrep SAST ruleset for fast pattern-based vulnerability detection.
                                 'Semgrep': {
                                     sh '''
-                                        docker run --rm -v "$WORKSPACE:/src" \
+                                        docker run --rm -u "$(id -u):$(id -g)" -v "$WORKSPACE:/src" \
                                           returntocorp/semgrep semgrep scan /src \
                                           --config auto --error || true
                                     '''
