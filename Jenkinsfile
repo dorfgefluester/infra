@@ -37,7 +37,7 @@ pipeline {
                         def latest = ''
                         withCredentials([gitUsernamePassword(credentialsId: credId, gitToolName: 'Default')]) {
                             latest = sh(
-                                script: "git ls-remote --heads '${repoUrl}' | cut -f2 | sed 's#refs/heads/##' | grep -E '^[0-9]+\\.[0-9]+\\.[0-9]+$' | sort -V | tail -n 1",
+                                script: "git ls-remote --heads '${repoUrl}' | cut -f2 | sed 's#refs/heads/##' | grep -E -x '[0-9]+\\.[0-9]+\\.[0-9]+' | sort -V | tail -n 1",
                                 returnStdout: true
                             ).trim()
                         }
