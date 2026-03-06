@@ -73,6 +73,7 @@ pipeline {
                 docker {
                     image "node:${NODE_VERSION}"
                     args "-u root:root --entrypoint=''"
+                    reuseNode true
                 }
             }
             stages {
@@ -184,7 +185,7 @@ pipeline {
                     }
                     post {
                         always {
-                            archiveArtifacts artifacts: 'coverage/**/*', fingerprint: true, allowEmptyArchive: true
+                            archiveArtifacts artifacts: 'tests/coverage/**/*', fingerprint: true, allowEmptyArchive: true
                         }
                     }
                 }
@@ -221,9 +222,9 @@ pipeline {
                                       sonar-scanner \
                                         -Dsonar.projectKey=dorfgefluester \
                                         -Dsonar.projectName="Dorfgefluester" \
-                                        -Dsonar.sources=src \
+                                        -Dsonar.sources=. \
                                         -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/tests/**,**/coverage/** \
-                                        -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info \
+                                        -Dsonar.javascript.lcov.reportPaths=tests/coverage/lcov.info \
                                         -Dsonar.host.url="$SONAR_HOST_URL"
                                 '''
                             }
@@ -343,6 +344,14 @@ pipeline {
                 // Build the immutable SHA-tagged image that will be scanned and published.
                 stage('Build Docker Image') {
                     steps {
+                        script {
+                            if (!env.IMAGE_TAG?.trim()) {
+                                sh 'git config --global --add safe.directory "$WORKSPACE"'
+                                env.GIT_SHA = env.GIT_COMMIT?.take(7) ?: sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                                env.IMAGE_TAG = env.GIT_SHA
+                                echo "IMAGE_TAG was empty; resolved fallback tag ${env.IMAGE_TAG}."
+                            }
+                        }
                         sh 'docker build -t ${IMAGE_REPO}:${IMAGE_TAG} .'
                     }
                 }
