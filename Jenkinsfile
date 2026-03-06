@@ -158,6 +158,62 @@ pipeline {
                     }
                 }
 
+                // Enforce bundle-size budgets to prevent silent frontend payload regressions.
+                stage('Bundle Budget') {
+                    steps {
+                        script {
+                            def isReleaseBranch = (env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/)
+                            def maxIndexKb = isReleaseBranch ? 450 : 550
+                            def maxPhaserKb = isReleaseBranch ? 1600 : 1700
+                            def maxTotalKb = isReleaseBranch ? 2100 : 2300
+                            sh """
+                                node -e '
+                                const fs = require(\"fs\");
+                                const path = require(\"path\");
+                                const dir = path.join(\"dist\", \"assets\");
+                                if (!fs.existsSync(dir)) {
+                                  console.error(\"Bundle budget check failed: dist/assets not found.\");
+                                  process.exit(1);
+                                }
+                                const files = fs.readdirSync(dir).filter((name) => name.endsWith(\".js\"));
+                                const stats = files.map((name) => ({ name, bytes: fs.statSync(path.join(dir, name)).size }));
+                                const findByPrefix = (prefix) => stats.find((entry) => entry.name.startsWith(prefix));
+                                const indexChunk = findByPrefix(\"index-\");
+                                const phaserChunk = findByPrefix(\"phaser-\");
+                                const totalBytes = stats.reduce((sum, entry) => sum + entry.bytes, 0);
+
+                                const limits = {
+                                  index: ${maxIndexKb} * 1024,
+                                  phaser: ${maxPhaserKb} * 1024,
+                                  total: ${maxTotalKb} * 1024
+                                };
+
+                                const violations = [];
+                                if (!indexChunk) {
+                                  violations.push(\"Missing index-* chunk in dist/assets.\");
+                                } else if (indexChunk.bytes > limits.index) {
+                                  violations.push(`index chunk \${(indexChunk.bytes / 1024).toFixed(2)} KiB exceeds ${maxIndexKb} KiB.`);
+                                }
+                                if (!phaserChunk) {
+                                  violations.push(\"Missing phaser-* chunk in dist/assets.\");
+                                } else if (phaserChunk.bytes > limits.phaser) {
+                                  violations.push(`phaser chunk \${(phaserChunk.bytes / 1024).toFixed(2)} KiB exceeds ${maxPhaserKb} KiB.`);
+                                }
+                                if (totalBytes > limits.total) {
+                                  violations.push(`total JS bundle \${(totalBytes / 1024).toFixed(2)} KiB exceeds ${maxTotalKb} KiB.`);
+                                }
+
+                                console.log(`Bundle sizes: index=\${indexChunk ? (indexChunk.bytes / 1024).toFixed(2) : \"n/a\"} KiB, phaser=\${phaserChunk ? (phaserChunk.bytes / 1024).toFixed(2) : \"n/a\"} KiB, total=\${(totalBytes / 1024).toFixed(2)} KiB.`);
+                                if (violations.length > 0) {
+                                  console.error(\"Bundle budget violations:\\n - \" + violations.join(\"\\n - \"));
+                                  process.exit(1);
+                                }
+                                '
+                            """
+                        }
+                    }
+                }
+
                 // Run static checks and test execution in parallel to reduce CI cycle time.
                 stage('Lint & Test') {
                     parallel {
@@ -209,13 +265,22 @@ pipeline {
                     }
                 }
 
-                // Run optional E2E only when explicitly requested on master to control runtime.
-                stage('E2E (Optional)') {
+                // Run a release-branch happy-path E2E check and optionally run full E2E on demand.
+                stage('E2E (Release Happy Path)') {
                     when {
-                        expression { return params.RUN_E2E && env.BRANCH_NAME == 'master' }
+                        expression { return (env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/) || params.RUN_E2E }
                     }
                     steps {
-                        sh 'npm run test:e2e'
+                        script {
+                            def isReleaseBranch = (env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/)
+                            sh 'npx playwright install chromium'
+                            if (isReleaseBranch) {
+                                sh "npx playwright test tests/e2e/ui-interactions.spec.js --project=chromium --grep \"should open settings modal\""
+                            }
+                            if (params.RUN_E2E) {
+                                sh 'npm run test:e2e'
+                            }
+                        }
                     }
                 }
             }
@@ -396,22 +461,28 @@ pipeline {
                 // Scan the built image for high/critical vulnerabilities before publishing.
                 stage('Scan Docker Image') {
                     steps {
-                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                            script {
-                                def imageTag = env.IMAGE_TAG?.trim()
-                                if (!imageTag || imageTag == 'null') {
-                                    sh 'git config --global --add safe.directory "$WORKSPACE"'
-                                    imageTag = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                        script {
+                            def imageTag = env.IMAGE_TAG?.trim()
+                            if (!imageTag || imageTag == 'null') {
+                                sh 'git config --global --add safe.directory "$WORKSPACE"'
+                                imageTag = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                            }
+                            if (!imageTag || imageTag == 'null') {
+                                error('Unable to resolve IMAGE_TAG for image scan.')
+                            }
+                            def isReleaseBranch = (env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/)
+                            def trivyCommand = """
+                                docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+                                  aquasec/trivy image \
+                                  --exit-code 1 --severity ${isReleaseBranch ? 'CRITICAL' : 'HIGH,CRITICAL'} --ignore-unfixed \
+                                  "${IMAGE_REPO}:${imageTag}"
+                            """
+                            if (isReleaseBranch) {
+                                sh trivyCommand
+                            } else {
+                                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                                    sh trivyCommand
                                 }
-                                if (!imageTag || imageTag == 'null') {
-                                    error('Unable to resolve IMAGE_TAG for image scan.')
-                                }
-                                sh """
-                                    docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
-                                      aquasec/trivy image \
-                                      --exit-code 1 --severity HIGH,CRITICAL --ignore-unfixed \
-                                      "${IMAGE_REPO}:${imageTag}"
-                                """
                             }
                         }
                     }
