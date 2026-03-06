@@ -225,11 +225,9 @@ pipeline {
                                         -Dsonar.sources=. \
                                         -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/tests/**,**/coverage/** \
                                         -Dsonar.javascript.lcov.reportPaths=tests/coverage/lcov.info \
+                                        -Dsonar.scanner.metadataFilePath=report-task.txt \
                                         -Dsonar.host.url="$SONAR_HOST_URL"
                                 '''
-                            }
-                            script {
-                                env.SONAR_ANALYSIS_DONE = 'true'
                             }
                         }
                     }
@@ -270,12 +268,16 @@ pipeline {
         // Evaluate SonarQube quality gate and mark UNSTABLE instead of failing hard on gate errors.
         stage('Quality Gate') {
             when {
-                expression { return env.BUILD_ALLOWED == 'true' && env.SONAR_ANALYSIS_DONE == 'true' }
+                expression { return env.BUILD_ALLOWED == 'true' }
             }
             steps {
                 catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                    timeout(time: 5, unit: 'MINUTES') {
-                        script {
+                    script {
+                        if (!fileExists('report-task.txt')) {
+                            unstable('Skipping quality gate: Sonar report-task.txt not found.')
+                            return
+                        }
+                        timeout(time: 5, unit: 'MINUTES') {
                             def qg = waitForQualityGate()
                             if (qg.status != 'OK') {
                                 unstable("Quality gate failed: ${qg.status}")
@@ -345,12 +347,20 @@ pipeline {
                 stage('Build Docker Image') {
                     steps {
                         script {
-                            if (!env.IMAGE_TAG?.trim()) {
-                                sh 'git config --global --add safe.directory "$WORKSPACE"'
-                                env.GIT_SHA = env.GIT_COMMIT?.take(7) ?: sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
-                                env.IMAGE_TAG = env.GIT_SHA
-                                echo "IMAGE_TAG was empty; resolved fallback tag ${env.IMAGE_TAG}."
+                            def resolvedTag = env.IMAGE_TAG?.trim()
+                            if (!resolvedTag && env.GIT_COMMIT?.trim()) {
+                                resolvedTag = env.GIT_COMMIT.take(7)
                             }
+                            if (!resolvedTag) {
+                                sh 'git config --global --add safe.directory "$WORKSPACE"'
+                                resolvedTag = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                            }
+                            if (!resolvedTag) {
+                                error('Unable to resolve IMAGE_TAG from GIT_COMMIT or git rev-parse.')
+                            }
+                            env.GIT_SHA = resolvedTag
+                            env.IMAGE_TAG = resolvedTag
+                            echo "Using image tag ${env.IMAGE_TAG}."
                         }
                         sh 'docker build -t ${IMAGE_REPO}:${IMAGE_TAG} .'
                     }
