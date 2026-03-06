@@ -10,6 +10,7 @@ pipeline {
         timeout(time: 45, unit: 'MINUTES')
         timestamps()
         disableConcurrentBuilds()
+        skipDefaultCheckout(true)
     }
 
     environment {
@@ -18,6 +19,9 @@ pipeline {
         BUILD_ALLOWED = 'true'
         REGISTRY = 'dev-env-01:5000'
         IMAGE_REPO = "${REGISTRY}/dorfgefluester"
+        DEPLOY_HOST = 'dev-env-01'
+        DEPLOY_USER = 'deploy'
+        SSH_CRED_ID = 'dev-env-01-ssh'
         NAMESPACE = 'dev'
         RELEASE = 'dorfgefluester'
     }
@@ -29,10 +33,11 @@ pipeline {
                     def isVersionBranch = (env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/)
                     if (isVersionBranch) {
                         def credId = scm.userRemoteConfigs[0].credentialsId
+                        def repoUrl = scm.userRemoteConfigs[0].url
                         def latest = ''
                         withCredentials([gitUsernamePassword(credentialsId: credId, gitToolName: 'Default')]) {
                             latest = sh(
-                                script: 'git ls-remote --heads origin | awk \'{print $2}\' | sed \'s#refs/heads/##\' | grep -E \'^[0-9]+\\.[0-9]+\\.[0-9]+$\' | sort -V | tail -n 1',
+                                script: "git ls-remote --heads '${repoUrl}' | cut -f2 | sed 's#refs/heads/##' | grep -E '^[0-9]+\\.[0-9]+\\.[0-9]+$' | sort -V | tail -n 1",
                                 returnStdout: true
                             ).trim()
                         }
@@ -87,21 +92,21 @@ pipeline {
             }
         }
 
-        stage('Lint') {
+        stage('Code Quality (Parallel)') {
             when {
                 expression { return env.BUILD_ALLOWED == 'true' }
             }
-            steps {
-                sh 'npm run lint --if-present -- --max-warnings=0'
-            }
-        }
-
-        stage('Format Check') {
-            when {
-                expression { return env.BUILD_ALLOWED == 'true' }
-            }
-            steps {
-                sh 'npm run format:check --if-present'
+            parallel {
+                stage('Lint') {
+                    steps {
+                        sh 'npm run lint --if-present -- --max-warnings=0'
+                    }
+                }
+                stage('Format Check') {
+                    steps {
+                        sh 'npm run format:check --if-present'
+                    }
+                }
             }
         }
 
@@ -178,41 +183,41 @@ pipeline {
             }
         }
 
-        stage('Helm Lint') {
+        stage('Helm Validation (Parallel)') {
             when {
                 expression { return env.BUILD_ALLOWED == 'true' }
             }
-            steps {
-                script {
-                    def hasHelm = sh(script: 'command -v helm >/dev/null 2>&1', returnStatus: true) == 0
-                    if (hasHelm) {
-                        sh 'helm lint helm/dorfgefluester'
-                    } else {
-                        echo 'Helm not found on agent; skipping Helm Lint.'
+            parallel {
+                stage('Helm Lint') {
+                    steps {
+                        script {
+                            def hasHelm = sh(script: 'command -v helm >/dev/null 2>&1', returnStatus: true) == 0
+                            if (hasHelm) {
+                                sh 'helm lint helm/dorfgefluester'
+                            } else {
+                                echo 'Helm not found on agent; skipping Helm Lint.'
+                            }
+                        }
                     }
                 }
-            }
-        }
-
-        stage('Helm Render (Dry Run)') {
-            when {
-                expression { return env.BUILD_ALLOWED == 'true' }
-            }
-            steps {
-                script {
-                    def hasHelm = sh(script: 'command -v helm >/dev/null 2>&1', returnStatus: true) == 0
-                    def hasKubectl = sh(script: 'command -v kubectl >/dev/null 2>&1', returnStatus: true) == 0
-                    if (hasHelm && hasKubectl) {
-                        sh """
-                          helm template ${RELEASE} helm/dorfgefluester \
-                            --namespace ${NAMESPACE} \
-                            --set image.repository=${IMAGE_REPO} \
-                            --set image.tag=ci-dry-run \
-                            --set ingress.host=dorf.test > /tmp/${RELEASE}-rendered.yaml
-                          kubectl apply --dry-run=client -f /tmp/${RELEASE}-rendered.yaml
-                        """
-                    } else {
-                        echo 'Helm or kubectl not found on agent; skipping Helm Render (Dry Run).'
+                stage('Helm Render (Dry Run)') {
+                    steps {
+                        script {
+                            def hasHelm = sh(script: 'command -v helm >/dev/null 2>&1', returnStatus: true) == 0
+                            def hasKubectl = sh(script: 'command -v kubectl >/dev/null 2>&1', returnStatus: true) == 0
+                            if (hasHelm && hasKubectl) {
+                                sh """
+                                  helm template ${RELEASE} helm/dorfgefluester \
+                                    --namespace ${NAMESPACE} \
+                                    --set image.repository=${IMAGE_REPO} \
+                                    --set image.tag=ci-dry-run \
+                                    --set ingress.host=dorf.test > /tmp/${RELEASE}-rendered.yaml
+                                  kubectl apply --dry-run=client -f /tmp/${RELEASE}-rendered.yaml
+                                """
+                            } else {
+                                echo 'Helm or kubectl not found on agent; skipping Helm Render (Dry Run).'
+                            }
+                        }
                     }
                 }
             }
@@ -231,11 +236,39 @@ pipeline {
                 script {
                     env.IMAGE_TAG = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
                 }
-                sh """
-                  set -e
-                  docker build -t ${IMAGE_REPO}:${IMAGE_TAG} .
-                  docker push ${IMAGE_REPO}:${IMAGE_TAG}
-                """
+                sh 'docker build -t ${IMAGE_REPO}:${IMAGE_TAG} .'
+                script {
+                    def directPushStatus = sh(script: 'docker push ${IMAGE_REPO}:${IMAGE_TAG}', returnStatus: true)
+
+                    if (directPushStatus == 0) {
+                        echo 'Image pushed directly from Jenkins agent.'
+                    } else {
+                        echo "Direct push failed (likely insecure registry/TLS mismatch). Falling back to push via ${DEPLOY_HOST}."
+
+                        withCredentials([sshUserPrivateKey(credentialsId: env.SSH_CRED_ID, keyFileVariable: 'SSH_KEY')]) {
+                            sh """
+                              set -e
+                              docker save ${IMAGE_REPO}:${IMAGE_TAG} | gzip > /tmp/${RELEASE}-${IMAGE_TAG}.tar.gz
+                              scp -i "${SSH_KEY}" -o StrictHostKeyChecking=no /tmp/${RELEASE}-${IMAGE_TAG}.tar.gz ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/
+                              ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} '
+                                set -e
+                                if docker info >/dev/null 2>&1; then
+                                  DOCKER_CMD="docker"
+                                elif sudo -n docker info >/dev/null 2>&1; then
+                                  DOCKER_CMD="sudo docker"
+                                else
+                                  echo "Docker is not available for user ${DEPLOY_USER} on ${DEPLOY_HOST}."
+                                  exit 1
+                                fi
+                                gunzip -c /tmp/${RELEASE}-${IMAGE_TAG}.tar.gz | \$DOCKER_CMD load
+                                \$DOCKER_CMD push ${IMAGE_REPO}:${IMAGE_TAG}
+                                rm -f /tmp/${RELEASE}-${IMAGE_TAG}.tar.gz
+                              '
+                              rm -f /tmp/${RELEASE}-${IMAGE_TAG}.tar.gz
+                            """
+                        }
+                    }
+                }
             }
             post {
                 success {
