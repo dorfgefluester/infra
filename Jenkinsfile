@@ -607,7 +607,13 @@ pipeline {
             }
             post {
                 success {
-                    echo "Image published: ${IMAGE_REPO}:${IMAGE_TAG}"
+                    script {
+                        def publishedTag = env.IMAGE_TAG?.trim()
+                        if (!publishedTag || publishedTag == 'null') {
+                            publishedTag = env.GIT_SHA?.trim()
+                        }
+                        echo "Image published: ${env.IMAGE_REPO}:${publishedTag ?: 'unknown'}"
+                    }
                     echo "Use dedicated deploy pipelines for environment rollout (e.g. jenkins/*-deploy.Jenkinsfile)."
                 }
             }
