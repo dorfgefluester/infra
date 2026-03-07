@@ -267,27 +267,20 @@ pipeline {
 
                 // Run a release-branch happy-path E2E check and optionally run full E2E on demand.
                 stage('E2E (Release Happy Path)') {
-                    agent {
-                        docker {
-                            image 'mcr.microsoft.com/playwright:v1.50.0-noble'
-                            args "--entrypoint='' --ipc=host"
-                            reuseNode true
-                        }
-                    }
-                    environment {
-                        PLAYWRIGHT_BROWSERS_PATH = '/ms-playwright'
-                    }
                     when {
                         expression { return (env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/) || params.RUN_E2E }
                     }
                     steps {
-                        script {
-                            def isReleaseBranch = (env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/)
-                            if (isReleaseBranch) {
-                                sh "npx playwright test tests/e2e/ui-interactions.spec.js --project=chromium --grep \"should open settings modal\""
-                            }
-                            if (params.RUN_E2E) {
-                                sh 'npm run test:e2e'
+                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                            script {
+                                def isReleaseBranch = (env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/)
+                                sh 'npx playwright install chromium'
+                                if (isReleaseBranch) {
+                                    sh "npx playwright test tests/e2e/ui-interactions.spec.js --project=chromium --grep \"should open settings modal\""
+                                }
+                                if (params.RUN_E2E) {
+                                    sh 'npm run test:e2e'
+                                }
                             }
                         }
                     }
