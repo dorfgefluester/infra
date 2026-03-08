@@ -329,7 +329,31 @@ pipeline {
                         def runFullE2E = (params.RUN_E2E == true)
                         def runHappyPath = isReleaseBranch && !runFullE2E
 
-                        def playwrightImage = 'mcr.microsoft.com/playwright:v1.57.0-jammy'
+                        def playwrightVersion = sh(
+                            script: '''
+                                set -e
+                                docker run --rm -u "$(id -u):$(id -g)" \
+                                  -v "$WORKSPACE:/work" -w /work \
+                                  node:20 \
+                                  sh -lc '
+                                    if [ -f node_modules/@playwright/test/package.json ]; then
+                                      node -p "require(\\"./node_modules/@playwright/test/package.json\\").version"
+                                    elif [ -f package-lock.json ]; then
+                                      node -e "const lock=require(\\"./package-lock.json\\"); const v=(lock?.packages?.[\\"node_modules/@playwright/test\\"]?.version)|| (lock?.dependencies?.[\\"@playwright/test\\"]?.version) || \\"\\"; process.stdout.write(v);"
+                                    else
+                                      echo ""
+                                    fi
+                                  '
+                            ''',
+                            returnStdout: true
+                        ).trim()
+
+                        if (!playwrightVersion) {
+                            unstable('Skipping E2E: unable to resolve @playwright/test version from node_modules or package-lock.json.')
+                            return
+                        }
+
+                        def playwrightImage = "mcr.microsoft.com/playwright:v${playwrightVersion}-jammy"
                         def dockerRunBase = """
                             docker run --rm --ipc=host \
                               -u "\$(id -u):\$(id -g)" \
@@ -469,6 +493,24 @@ pipeline {
                                 --project-key dorfgefluester \
                                 --out-json reports/sonarqube/issues.json \
                                 --out-md reports/sonarqube/issues.md
+
+                            docker run --rm -u "$(id -u):$(id -g)" \
+                              -v "$WORKSPACE:/work" -w /work \
+                              -e SONAR_HOST_URL="$SONAR_HOST_URL" \
+                              -e SONAR_TOKEN="$SONAR_AUTH_TOKEN" \
+                              node:20 \
+                              node scripts/quality/sonar-report.cjs \
+                                --project-key dorfgefluester \
+                                --out-json reports/sonarqube/sonar-report.json \
+                                --out-md reports/sonarqube/sonar-report.md \
+                                --strict false
+
+                            echo ""
+                            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                            echo "SonarQube Report (from reports/sonarqube/sonar-report.md)"
+                            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                            echo ""
+                            sed -n '1,220p' reports/sonarqube/sonar-report.md || true
                         '''
                     }
                 }
