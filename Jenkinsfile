@@ -510,9 +510,44 @@ pipeline {
                                 error('Unable to resolve IMAGE_TAG for image scan.')
                             }
                             def isReleaseBranch = (env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/)
+                            def trivyCacheDir = "${env.WORKSPACE}/.trivy-image-cache"
+                            sh "mkdir -p '${trivyCacheDir}'"
+
+                            def dbRepos = [
+                                'mirror.gcr.io/aquasec/trivy-db:2',
+                                'ghcr.io/aquasecurity/trivy-db:2',
+                                'public.ecr.aws/aquasecurity/trivy-db:2'
+                            ]
+                            def dbReady = false
+                            for (def repo : dbRepos) {
+                                echo "Attempting Trivy DB download from ${repo}..."
+                                def dbStatus = sh(
+                                    script: """
+                                        docker run --rm \
+                                          -v '${trivyCacheDir}:/tmp/trivy-cache' \
+                                          aquasec/trivy image \
+                                          --cache-dir /tmp/trivy-cache \
+                                          --download-db-only \
+                                          --db-repository ${repo}
+                                    """,
+                                    returnStatus: true
+                                )
+                                if (dbStatus == 0) {
+                                    dbReady = true
+                                    break
+                                }
+                            }
+                            if (!dbReady) {
+                                error('Unable to download Trivy vulnerability DB from configured repositories.')
+                            }
+
                             def trivyCommand = """
-                                docker run --rm -v /var/run/docker.sock:/var/run/docker.sock \
+                                docker run --rm \
+                                  -v /var/run/docker.sock:/var/run/docker.sock \
+                                  -v '${trivyCacheDir}:/tmp/trivy-cache' \
                                   aquasec/trivy image \
+                                  --cache-dir /tmp/trivy-cache \
+                                  --skip-db-update \
                                   --exit-code 1 --severity ${isReleaseBranch ? 'CRITICAL' : 'HIGH,CRITICAL'} --ignore-unfixed \
                                   "${IMAGE_REPO}:${imageTag}"
                             """
