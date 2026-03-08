@@ -17,8 +17,8 @@ What it does:
   - Runs a local Trivy FS scan (requires docker/podman or trivy binary)
 
 Outputs (defaults):
-  - reports/sonarqube/issues.json + docs/SONARQUBE_ISSUES.md
-  - reports/trivy/fs.json + docs/TRIVY_FINDINGS.md
+  - reports/sonarqube/issues.json + docs/ci/SONARQUBE_ISSUES.md
+  - reports/trivy/fs.json + docs/ci/TRIVY_FINDINGS.md
 
 Options:
   --sonar true|false

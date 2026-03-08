@@ -109,7 +109,7 @@ Usage:
 
 Outputs:
   --out-json reports/trivy/fs.json
-  --out-md  docs/TRIVY_FINDINGS.md
+  --out-md  docs/ci/TRIVY_FINDINGS.md
 
 Options:
   --severity HIGH,CRITICAL
@@ -139,7 +139,7 @@ function main() {
 
   const scanPath = args.path || '.';
   const outJson = args['out-json'] || 'reports/trivy/fs.json';
-  const outMd = args['out-md'] || 'docs/TRIVY_FINDINGS.md';
+  const outMd = args['out-md'] || 'docs/ci/TRIVY_FINDINGS.md';
 
   const severity = args.severity || 'HIGH,CRITICAL';
   const ignoreUnfixed = parseBoolean(args['ignore-unfixed'], true);

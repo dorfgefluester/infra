@@ -188,7 +188,7 @@ Usage:
 
 Outputs:
   --out-json reports/sonarqube/issues.json
-  --out-md  docs/SONARQUBE_ISSUES.md
+  --out-md  docs/ci/SONARQUBE_ISSUES.md
 
 Env vars (alternatives):
   SONAR_HOST_URL, SONAR_TOKEN, SONAR_PROJECT_KEY
@@ -212,7 +212,7 @@ async function main() {
   const projectKey = args['project-key'] || process.env.SONAR_PROJECT_KEY || DEFAULT_PROJECT_KEY;
 
   const outJson = args['out-json'] || 'reports/sonarqube/issues.json';
-  const outMd = args['out-md'] || 'docs/SONARQUBE_ISSUES.md';
+  const outMd = args['out-md'] || 'docs/ci/SONARQUBE_ISSUES.md';
 
   const typesRaw = args.types || 'VULNERABILITY,BUG,CODE_SMELL';
   const types = String(typesRaw)
