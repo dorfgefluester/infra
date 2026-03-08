@@ -1,5 +1,5 @@
 pipeline {
-    agent { label 'linux docker' }
+    agent { label 'linux-docker' }
 
     parameters {
         booleanParam(name: 'RUN_E2E', defaultValue: false, description: 'Run Playwright E2E tests')
