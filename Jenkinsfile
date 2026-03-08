@@ -409,7 +409,7 @@ pipeline {
                                             -Dsonar.projectKey=dorfgefluester \
                                             -Dsonar.projectName="Dorfgefluester" \
                                             -Dsonar.sources=. \
-                                            -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/tests/**,**/coverage/** \
+                                            -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/tests/**,**/coverage/**,**/assets/tilemaps/**/*.tsx \
                                             -Dsonar.javascript.lcov.reportPaths=tests/coverage/lcov.info \
                                             -Dsonar.scanner.metadataFilePath=/usr/src/report-task.txt \
                                             -Dsonar.host.url="$SONAR_HOST_URL"
