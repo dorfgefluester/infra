@@ -28,6 +28,12 @@ pipeline {
         BUILD_ALLOWED = 'true'
         GIT_SHA = ''
         IMAGE_TAG = ''
+        // Keep dependency/scanner caches outside the wiped workspace root.
+        // Jenkins creates a per-workspace temp directory at "$WORKSPACE@tmp" which is not removed by "Prepare Workspace".
+        WORKSPACE_TMP = "${WORKSPACE}@tmp"
+        NPM_CACHE_DIR = "${WORKSPACE_TMP}/.npm-cache"
+        TRIVY_FS_CACHE_DIR = "${WORKSPACE_TMP}/.trivy-fs-cache"
+        TRIVY_IMAGE_CACHE_DIR = "${WORKSPACE_TMP}/.trivy-image-cache"
     }
 
     stages {
@@ -179,7 +185,10 @@ pipeline {
                 // Install locked dependencies for reproducible builds and consistent scans.
                 stage('Install Dependencies') {
                     steps {
-                        sh 'npm ci --prefer-offline --no-audit'
+                        sh '''
+                            mkdir -p "$NPM_CACHE_DIR"
+                            npm ci --cache "$NPM_CACHE_DIR" --prefer-offline --no-audit --no-fund
+                        '''
                     }
                 }
 
@@ -307,11 +316,20 @@ pipeline {
                     when {
                         expression { return (env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/) || params.RUN_E2E }
                     }
+                    agent {
+                        docker {
+                            // Chromium launched by Playwright needs system deps not present in the plain node image.
+                            // Using the official Playwright image here avoids downloading browsers and fixes missing libs (e.g. libnspr4.so).
+                            image 'mcr.microsoft.com/playwright:v1.57.0-jammy'
+                            args "--entrypoint='' --ipc=host"
+                            reuseNode true
+                        }
+                    }
                     steps {
                         catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
                             script {
                                 def isReleaseBranch = (env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/)
-                                sh 'npx playwright install chromium'
+                                sh 'npx playwright --version'
                                 if (isReleaseBranch) {
                                     sh "npx playwright test tests/e2e/ui-interactions.spec.js --project=chromium --grep \"should open settings modal\""
                                 }
@@ -319,6 +337,11 @@ pipeline {
                                     sh 'npm run test:e2e'
                                 }
                             }
+                        }
+                    }
+                    post {
+                        always {
+                            archiveArtifacts artifacts: 'playwright-report/**/*,tests/test-results/**/*', fingerprint: true, allowEmptyArchive: true
                         }
                     }
                 }
@@ -365,10 +388,10 @@ pipeline {
                                 // Scan the repository filesystem for high/critical issues without failing the pipeline.
                                 'Trivy FS Scan': {
                                     sh '''
-                                        mkdir -p "$WORKSPACE/.trivy-cache"
+                                        mkdir -p "$TRIVY_FS_CACHE_DIR"
                                         docker run --rm -u "$(id -u):$(id -g)" \
                                           -v "$WORKSPACE:/src" \
-                                          -v "$WORKSPACE/.trivy-cache:/tmp/trivy-cache" \
+                                          -v "$TRIVY_FS_CACHE_DIR:/tmp/trivy-cache" \
                                           aquasec/trivy fs /src \
                                           --cache-dir /tmp/trivy-cache \
                                           --exit-code 0 --severity HIGH,CRITICAL --ignore-unfixed || true
@@ -510,7 +533,7 @@ pipeline {
                                 error('Unable to resolve IMAGE_TAG for image scan.')
                             }
                             def isReleaseBranch = (env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/)
-                            def trivyCacheDir = "${env.WORKSPACE}/.trivy-image-cache"
+                            def trivyCacheDir = "${env.TRIVY_IMAGE_CACHE_DIR}"
                             sh "mkdir -p '${trivyCacheDir}'"
 
                             def dbRepos = [
