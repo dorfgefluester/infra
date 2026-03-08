@@ -16,6 +16,35 @@ function pickContainerRuntime() {
   return null;
 }
 
+function runDirectTrivy({ scanPath, outJson, severity, ignoreUnfixed, skipDirs }) {
+  const args = [
+    'fs',
+    scanPath,
+    '--format',
+    'json',
+    '--output',
+    outJson,
+    '--severity',
+    severity,
+    '--no-progress',
+    '--exit-code',
+    '0'
+  ];
+
+  if (ignoreUnfixed) {
+    args.push('--ignore-unfixed');
+  }
+
+  for (const dir of skipDirs) {
+    args.push('--skip-dirs', dir);
+  }
+
+  const res = spawnSync('trivy', args, { stdio: 'inherit' });
+  if (res.status !== 0) {
+    throw new Error(`Trivy scan failed with exit code ${res.status}`);
+  }
+}
+
 function renderTrivyMarkdown({ json, maxList }) {
   const results = Array.isArray(json?.Results) ? json.Results : [];
 
@@ -87,7 +116,7 @@ Options:
   --ignore-unfixed true|false
   --skip-dirs node_modules,dist,tests/coverage,playwright-report
   --max-list 200
-  --runtime docker|podman
+  --runtime docker|podman|trivy
 `.trim());
 }
 
@@ -122,14 +151,31 @@ function main() {
 
   const maxList = Number(args['max-list'] || 200);
 
-  const runtime = args.runtime || pickContainerRuntime();
-  if (!runtime) {
-    throw new Error('Neither docker nor podman found. Install one (or run Trivy directly) to generate FS findings.');
+  const requestedRuntime = args.runtime ? String(args.runtime).trim().toLowerCase() : '';
+  const runtime = requestedRuntime && requestedRuntime !== 'trivy' ? requestedRuntime : pickContainerRuntime();
+  const hasNativeTrivy = commandExists('trivy');
+  if (!runtime && !hasNativeTrivy) {
+    throw new Error('No Trivy runtime found. Install docker/podman or trivy binary to generate FS findings.');
+  }
+
+  if (runtime && !['docker', 'podman'].includes(runtime)) {
+    throw new Error(`Unsupported --runtime value: ${runtime}. Use docker, podman, or trivy.`);
   }
 
   ensureDirForFile(outJson);
 
   const cwd = process.cwd();
+
+  if ((!runtime || requestedRuntime === 'trivy') && hasNativeTrivy) {
+    runDirectTrivy({ scanPath, outJson, severity, ignoreUnfixed, skipDirs });
+    const json = readJson(outJson);
+    writeText(outMd, renderTrivyMarkdown({ json, maxList }));
+
+    console.log(`Wrote Trivy findings JSON: ${outJson}`);
+    console.log(`Wrote Trivy findings markdown: ${outMd}`);
+    return;
+  }
+
   const absScanPath = path.resolve(cwd, scanPath);
   const outJsonAbs = path.resolve(cwd, outJson);
 
