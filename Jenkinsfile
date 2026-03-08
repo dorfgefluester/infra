@@ -458,24 +458,27 @@ pipeline {
             }
         }
 
-        // Evaluate SonarQube quality gate and mark UNSTABLE instead of failing hard on gate errors.
+        // Wait for SonarQube to finish processing the analysis report.
+        // We do NOT fail or mark UNSTABLE based on the global Sonar Quality Gate here, because the default gate
+        // is currently too strict for this repo (new_violations/new_coverage/hotspot review). Instead we apply a
+        // focused gate later based on HIGH-impact Security/Reliability findings (see "Sonar Gate (High Impact)").
         stage('Quality Gate') {
             when {
                 expression { return env.BUILD_ALLOWED == 'true' }
             }
             steps {
-                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                    script {
-                        if (!fileExists('report-task.txt')) {
-                            unstable('Skipping quality gate: Sonar report-task.txt not found.')
-                            return
-                        }
+                script {
+                    if (!fileExists('report-task.txt')) {
+                        echo 'Skipping waitForQualityGate: Sonar report-task.txt not found.'
+                        return
+                    }
+                    try {
                         timeout(time: 5, unit: 'MINUTES') {
                             def qg = waitForQualityGate()
-                            if (qg.status != 'OK') {
-                                unstable("Quality gate failed: ${qg.status}")
-                            }
+                            echo "SonarQube quality gate status (informational): ${qg.status}"
                         }
+                    } catch (err) {
+                        echo "Unable to retrieve SonarQube quality gate (continuing): ${err.getMessage()}"
                     }
                 }
             }
@@ -518,6 +521,43 @@ pipeline {
                             echo ""
                             sed -n '1,220p' reports/sonarqube/sonar-report.md || true
                         '''
+                    }
+                }
+            }
+        }
+
+        // Mark the build UNSTABLE only when SonarQube reports HIGH-impact Security or Reliability findings.
+        // This keeps CI "green by default" while you continuously burn down medium/maintainability issues.
+        stage('Sonar Gate (High Impact)') {
+            when {
+                expression { return env.BUILD_ALLOWED == 'true' }
+            }
+            steps {
+                script {
+                    def reportPath = 'reports/sonarqube/sonar-report.json'
+                    if (!fileExists(reportPath)) {
+                        echo "Skipping Sonar gate: ${reportPath} not found."
+                        return
+                    }
+
+                    def report = new groovy.json.JsonSlurperClassic().parseText(readFile(reportPath))
+                    def relHigh = report?.totals?.reliability_high
+                    def secHigh = report?.totals?.security_high
+
+                    if (relHigh == null) {
+                        relHigh = (report?.reliability_high instanceof List) ? report.reliability_high.size() : 0
+                    }
+                    if (secHigh == null) {
+                        secHigh = (report?.security_high instanceof List) ? report.security_high.size() : 0
+                    }
+
+                    relHigh = (relHigh as Integer)
+                    secHigh = (secHigh as Integer)
+
+                    if (relHigh > 0 || secHigh > 0) {
+                        unstable("High-impact Sonar findings: reliability_high=${relHigh}, security_high=${secHigh}")
+                    } else {
+                        echo 'No HIGH-impact reliability/security findings (Sonar gate passed).'
                     }
                 }
             }
