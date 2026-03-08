@@ -1,5 +1,5 @@
 pipeline {
-    agent any
+    agent { label 'linux docker' }
 
     parameters {
         booleanParam(name: 'RUN_E2E', defaultValue: false, description: 'Run Playwright E2E tests')
@@ -58,6 +58,43 @@ pipeline {
                         }
                     } else {
                         echo "Non-version branch (${env.BRANCH_NAME}); continuing."
+                    }
+
+                    if (env.BUILD_ALLOWED == 'true') {
+                        def deployPipelinePath = 'jenkins/core-vitals-staging-deploy.Jenkinsfile'
+                        def changedPaths = []
+
+                        try {
+                            for (def changeSet in currentBuild.changeSets) {
+                                for (def entry in changeSet.items) {
+                                    for (def file in entry.affectedFiles) {
+                                        if (file?.path) {
+                                            changedPaths << file.path.toString()
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (ignored) {
+                            echo 'Unable to inspect changelog entries; continuing build.'
+                        }
+
+                        changedPaths = changedPaths.unique()
+                        if (!changedPaths.isEmpty()) {
+                            def onlyDeployPipelineChanged = true
+                            for (def changedPath in changedPaths) {
+                                if (changedPath != deployPipelinePath) {
+                                    onlyDeployPipelineChanged = false
+                                    break
+                                }
+                            }
+                            if (onlyDeployPipelineChanged) {
+                                env.BUILD_ALLOWED = 'false'
+                                currentBuild.result = 'NOT_BUILT'
+                                echo "Skipping build: only ${deployPipelinePath} changed."
+                            }
+                        } else {
+                            echo 'No SCM changelog entries available; continuing build.'
+                        }
                     }
                 }
             }
