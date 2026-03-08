@@ -310,40 +310,50 @@ pipeline {
                         }
                     }
                 }
+            }
+        }
 
-                // Run a release-branch happy-path E2E check and optionally run full E2E on demand.
-                stage('E2E (Release Happy Path)') {
-                    when {
-                        expression { return (env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/) || params.RUN_E2E }
-                    }
-                    agent {
-                        docker {
-                            // Chromium launched by Playwright needs system deps not present in the plain node image.
-                            // Using the official Playwright image here avoids downloading browsers and fixes missing libs (e.g. libnspr4.so).
-                            image 'mcr.microsoft.com/playwright:v1.57.0-jammy'
-                            args "--entrypoint='' --ipc=host"
-                            reuseNode true
+        // Run a release-branch happy-path E2E check and optionally run full E2E on demand.
+        // NOTE: This stage must run on the Jenkins agent (not inside the Node CI container), because it needs to launch
+        // the Playwright Docker image and the nested Docker CLI is not available inside the CI container (see build #35).
+        stage('E2E (Release Happy Path)') {
+            when {
+                expression {
+                    return env.BUILD_ALLOWED == 'true' && ((env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/) || params.RUN_E2E)
+                }
+            }
+            steps {
+                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                    script {
+                        def isReleaseBranch = (env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/)
+                        def runFullE2E = Boolean(params.RUN_E2E)
+                        def runHappyPath = isReleaseBranch && !runFullE2E
+
+                        def playwrightImage = 'mcr.microsoft.com/playwright:v1.57.0-jammy'
+                        def dockerRunBase = """
+                            docker run --rm --ipc=host \
+                              -u \"$(id -u):$(id -g)\" \
+                              -v \"${env.WORKSPACE}:/work\" \
+                              -w /work \
+                              ${playwrightImage} \
+                              bash -lc
+                        """.trim()
+
+                        sh "${dockerRunBase} 'npx playwright --version'"
+
+                        if (runHappyPath) {
+                            sh "${dockerRunBase} 'npx playwright test tests/e2e/ui-interactions.spec.js --project=chromium --grep \"should open settings modal\"'"
+                        }
+
+                        if (runFullE2E) {
+                            sh "${dockerRunBase} 'npm run test:e2e'"
                         }
                     }
-                    steps {
-                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                            script {
-                                def isReleaseBranch = (env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/)
-                                sh 'npx playwright --version'
-                                if (isReleaseBranch) {
-                                    sh "npx playwright test tests/e2e/ui-interactions.spec.js --project=chromium --grep \"should open settings modal\""
-                                }
-                                if (params.RUN_E2E) {
-                                    sh 'npm run test:e2e'
-                                }
-                            }
-                        }
-                    }
-                    post {
-                        always {
-                            archiveArtifacts artifacts: 'playwright-report/**/*,tests/test-results/**/*', fingerprint: true, allowEmptyArchive: true
-                        }
-                    }
+                }
+            }
+            post {
+                always {
+                    archiveArtifacts artifacts: 'playwright-report/**/*,tests/test-results/**/*', fingerprint: true, allowEmptyArchive: true
                 }
             }
         }
@@ -388,12 +398,14 @@ pipeline {
                                 // Scan the repository filesystem for high/critical issues without failing the pipeline.
                                 'Trivy FS Scan': {
                                     sh '''
+                                        mkdir -p reports/trivy
                                         mkdir -p "$TRIVY_FS_CACHE_DIR"
                                         docker run --rm -u "$(id -u):$(id -g)" \
                                           -v "$WORKSPACE:/src" \
                                           -v "$TRIVY_FS_CACHE_DIR:/tmp/trivy-cache" \
                                           aquasec/trivy fs /src \
                                           --cache-dir /tmp/trivy-cache \
+                                          --format json --output /src/reports/trivy/fs.json \
                                           --exit-code 0 --severity HIGH,CRITICAL --ignore-unfixed || true
                                     '''
                                 },
@@ -434,6 +446,30 @@ pipeline {
                                 unstable("Quality gate failed: ${qg.status}")
                             }
                         }
+                    }
+                }
+            }
+        }
+
+        // Export a snapshot of SonarQube issues and persist scanner outputs as Jenkins artifacts for backlog triage.
+        stage('Export Findings') {
+            when {
+                expression { return env.BUILD_ALLOWED == 'true' }
+            }
+            steps {
+                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                    withSonarQubeEnv('SonarQube') {
+                        sh '''
+                            docker run --rm -u "$(id -u):$(id -g)" \
+                              -v "$WORKSPACE:/work" -w /work \
+                              -e SONAR_HOST_URL="$SONAR_HOST_URL" \
+                              -e SONAR_TOKEN="$SONAR_AUTH_TOKEN" \
+                              node:20 \
+                              node scripts/quality/sonarqube-export.cjs \
+                                --project-key dorfgefluester \
+                                --out-json reports/sonarqube/issues.json \
+                                --out-md reports/sonarqube/issues.md
+                        '''
                     }
                 }
             }
@@ -535,6 +571,7 @@ pipeline {
                             def isReleaseBranch = (env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/)
                             def trivyCacheDir = "${env.TRIVY_IMAGE_CACHE_DIR}"
                             sh "mkdir -p '${trivyCacheDir}'"
+                            sh 'mkdir -p reports/trivy'
 
                             def dbRepos = [
                                 'mirror.gcr.io/aquasec/trivy-db:2',
@@ -568,9 +605,11 @@ pipeline {
                                 docker run --rm \
                                   -v /var/run/docker.sock:/var/run/docker.sock \
                                   -v '${trivyCacheDir}:/tmp/trivy-cache' \
+                                  -v '${env.WORKSPACE}:/work' \
                                   aquasec/trivy image \
                                   --cache-dir /tmp/trivy-cache \
                                   --skip-db-update \
+                                  --format json --output /work/reports/trivy/image.json \
                                   --exit-code 1 --severity ${isReleaseBranch ? 'CRITICAL' : 'HIGH,CRITICAL'} --ignore-unfixed \
                                   "${IMAGE_REPO}:${imageTag}"
                             """
@@ -717,8 +756,11 @@ pipeline {
 
     post {
         always {
-            // Clean workspace only. Docker cache is preserved for faster incremental builds.
-            cleanWs(deleteDirs: true, disableDeferredWipeout: true, notFailBuild: true)
+            // Persist scan outputs for backlog triage (SonarQube issues export, Trivy JSON reports, etc.).
+            archiveArtifacts artifacts: 'reports/**/*,report-task.txt', fingerprint: false, allowEmptyArchive: true
+            // Skip cleanWs to preserve "$WORKSPACE@tmp" caches (npm/trivy) for faster subsequent builds.
+            // The workspace root itself is wiped at the start of each build in "Prepare Workspace".
+            echo 'Skipping cleanWs to keep per-workspace caches.'
         }
     }
 }
