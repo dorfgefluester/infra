@@ -332,8 +332,8 @@ pipeline {
                         def playwrightImage = 'mcr.microsoft.com/playwright:v1.57.0-jammy'
                         def dockerRunBase = """
                             docker run --rm --ipc=host \
-                              -u \"$(id -u):$(id -g)\" \
-                              -v \"${env.WORKSPACE}:/work\" \
+                              -u "\$(id -u):\$(id -g)" \
+                              -v "${env.WORKSPACE}:/work" \
                               -w /work \
                               ${playwrightImage} \
                               bash -lc
