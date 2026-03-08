@@ -326,7 +326,7 @@ pipeline {
                 catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
                     script {
                         def isReleaseBranch = (env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/)
-                        def runFullE2E = Boolean(params.RUN_E2E)
+                        def runFullE2E = (params.RUN_E2E == true)
                         def runHappyPath = isReleaseBranch && !runFullE2E
 
                         def playwrightImage = 'mcr.microsoft.com/playwright:v1.57.0-jammy'
