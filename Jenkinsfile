@@ -540,19 +540,44 @@ pipeline {
                         return
                     }
 
-                    def report = new groovy.json.JsonSlurperClassic().parseText(readFile(reportPath))
-                    def relHigh = report?.totals?.reliability_high
-                    def secHigh = report?.totals?.security_high
+                    // Avoid Groovy JSON parsing in Jenkins sandbox (script-security blocks JsonSlurperClassic by default).
+                    // Read totals via a short Node.js snippet inside a Node 20 container.
+                    def gateLine = sh(
+                        script: '''
+                          set -e
 
-                    if (relHigh == null) {
-                        relHigh = (report?.reliability_high instanceof List) ? report.reliability_high.size() : 0
-                    }
-                    if (secHigh == null) {
-                        secHigh = (report?.security_high instanceof List) ? report.security_high.size() : 0
+                          REPORT_PATH="reports/sonarqube/sonar-report.json"
+                          if [ ! -f "$REPORT_PATH" ]; then
+                            echo "REL_HIGH=0 SEC_HIGH=0"
+                            exit 0
+                          fi
+
+                          WORKDIR="${WORKSPACE:-$(pwd)}"
+                          docker run --rm -u "$(id -u):$(id -g)" \
+                            -v "$WORKDIR:/work" -w /work \
+                            node:20 \
+                            node -e '
+                              const fs = require("fs");
+                              const path = process.argv[1];
+                              const report = JSON.parse(fs.readFileSync(path, "utf8"));
+                              const rel = Number(report?.totals?.reliability_high ?? (Array.isArray(report?.reliability_high) ? report.reliability_high.length : 0));
+                              const sec = Number(report?.totals?.security_high ?? (Array.isArray(report?.security_high) ? report.security_high.length : 0));
+                              const relHigh = Number.isFinite(rel) ? rel : 0;
+                              const secHigh = Number.isFinite(sec) ? sec : 0;
+                              console.log(`REL_HIGH=${relHigh} SEC_HIGH=${secHigh}`);
+                            ' "$REPORT_PATH"
+                        ''',
+                        returnStdout: true
+                    ).trim()
+
+                    def matcher = gateLine =~ /REL_HIGH=(\d+)\s+SEC_HIGH=(\d+)/
+                    if (!matcher.find()) {
+                        echo "Unable to parse Sonar gate counts from: ${gateLine}"
+                        return
                     }
 
-                    relHigh = (relHigh as Integer)
-                    secHigh = (secHigh as Integer)
+                    def relHigh = (matcher.group(1) as Integer)
+                    def secHigh = (matcher.group(2) as Integer)
 
                     if (relHigh > 0 || secHigh > 0) {
                         unstable("High-impact Sonar findings: reliability_high=${relHigh}, security_high=${secHigh}")
