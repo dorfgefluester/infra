@@ -3,6 +3,7 @@ pipeline {
 
     parameters {
         booleanParam(name: 'RUN_E2E', defaultValue: false, description: 'Run Playwright E2E tests')
+        booleanParam(name: 'SONAR_VERBOSE', defaultValue: false, description: 'Enable verbose Sonar scanner logs (-X)')
     }
 
     options {
@@ -393,22 +394,27 @@ pipeline {
                     steps {
                         catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
                             withSonarQubeEnv('SonarQube') {
-                                sh '''
-                                    docker run --rm \
-                                      -u "$(id -u):$(id -g)" \
-                                      -e SONAR_HOST_URL="$SONAR_HOST_URL" \
-                                      -e SONAR_TOKEN="$SONAR_AUTH_TOKEN" \
-                                      -v "$WORKSPACE:/usr/src" \
-                                      sonarsource/sonar-scanner-cli:11 \
-                                      sonar-scanner \
-                                        -Dsonar.projectKey=dorfgefluester \
-                                        -Dsonar.projectName="Dorfgefluester" \
-                                        -Dsonar.sources=. \
-                                        -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/tests/**,**/coverage/** \
-                                        -Dsonar.javascript.lcov.reportPaths=tests/coverage/lcov.info \
-                                        -Dsonar.scanner.metadataFilePath=/usr/src/report-task.txt \
-                                        -Dsonar.host.url="$SONAR_HOST_URL"
-                                '''
+                                withEnv([
+                                    "SONAR_SCANNER_DEBUG=${params.SONAR_VERBOSE ? '-X' : ''}",
+                                    "SONAR_SCANNER_VERBOSE=${params.SONAR_VERBOSE ? '-Dsonar.verbose=true' : ''}"
+                                ]) {
+                                    sh '''
+                                        docker run --rm \
+                                          -u "$(id -u):$(id -g)" \
+                                          -e SONAR_HOST_URL="$SONAR_HOST_URL" \
+                                          -e SONAR_TOKEN="$SONAR_AUTH_TOKEN" \
+                                          -v "$WORKSPACE:/usr/src" \
+                                          sonarsource/sonar-scanner-cli:11 \
+                                          sonar-scanner $SONAR_SCANNER_DEBUG $SONAR_SCANNER_VERBOSE \
+                                            -Dsonar.projectKey=dorfgefluester \
+                                            -Dsonar.projectName="Dorfgefluester" \
+                                            -Dsonar.sources=. \
+                                            -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/tests/**,**/coverage/** \
+                                            -Dsonar.javascript.lcov.reportPaths=tests/coverage/lcov.info \
+                                            -Dsonar.scanner.metadataFilePath=/usr/src/report-task.txt \
+                                            -Dsonar.host.url="$SONAR_HOST_URL"
+                                    '''
+                                }
                             }
                         }
                     }

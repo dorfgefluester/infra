@@ -276,11 +276,24 @@ function renderMarkdown({ hostUrl, projectKey, qualityGate, measures, relHigh, r
   lines.push(`Generated: ${new Date().toISOString()}`);
   lines.push(`Project: \`${projectKey}\``);
   lines.push(`Server: \`${hostUrl}\``);
+  lines.push(`Dashboard: ${hostUrl}/dashboard?id=${encodeURIComponent(projectKey)}`);
   lines.push('');
 
   lines.push('## Quality Gate');
   lines.push('');
   lines.push(`- Status: ${qualityGate?.status ?? 'UNKNOWN'}`);
+  const conditions = Array.isArray(qualityGate?.conditions) ? qualityGate.conditions : [];
+  const failing = conditions.filter((c) => c?.status && String(c.status).toUpperCase() !== 'OK');
+  if (failing.length > 0) {
+    lines.push(`- Failing conditions: ${failing.length}`);
+    for (const c of failing.slice(0, 12)) {
+      const metric = c.metricKey || c.metric || 'unknown-metric';
+      const actual = c.actualValue ?? 'n/a';
+      const threshold = c.errorThreshold ?? 'n/a';
+      const comparator = c.comparator ?? '';
+      lines.push(`  - ${metric}: ${actual} ${comparator} ${threshold}`.trimEnd());
+    }
+  }
   lines.push('');
 
   lines.push('## Measures');
