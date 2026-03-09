@@ -739,6 +739,9 @@ pipeline {
 
 	                // Push directly when possible and fallback via deploy host for insecure-registry setups.
 	                stage('Push Docker Image') {
+	                    when {
+	                        branch 'master'
+	                    }
 	                    steps {
 	                        script {
 	                            def imageTag = env.IMAGE_TAG?.trim()
