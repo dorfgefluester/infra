@@ -366,9 +366,10 @@ pipeline {
 
                         sh "${dockerRunBase} 'npx playwright --version'"
 
-                        if (runHappyPath) {
-                            sh "${dockerRunBase} 'npx playwright test tests/e2e/ui-interactions.spec.js --project=chromium --grep \"should open settings modal\"'"
-                        }
+	                        if (runHappyPath) {
+	                            sh "${dockerRunBase} 'npx playwright test tests/e2e/ui-interactions.spec.js --project=chromium --grep \"should open settings modal\"'"
+	                            sh "${dockerRunBase} 'npx playwright test tests/e2e/accessibility.spec.js --project=chromium'"
+	                        }
 
                         if (runFullE2E) {
                             sh "${dockerRunBase} 'npm run test:e2e'"
@@ -421,10 +422,10 @@ pipeline {
                 }
 
                 // Execute independent security scans in parallel so one slow scan does not block others.
-                stage('Security Scans') {
-                    steps {
-                        script {
-                            parallel(
+	                stage('Security Scans') {
+	                    steps {
+	                        script {
+	                            parallel(
                                 // Scan the repository filesystem for high/critical issues without failing the pipeline.
                                 'Trivy FS Scan': {
                                     sh '''
@@ -447,14 +448,35 @@ pipeline {
                                           --config auto --error || true
                                     '''
                                 },
-                                // Run npm audit as a dependency-risk signal while keeping delivery non-blocking.
-                                'npm Audit': {
-                                    sh 'npm audit --audit-level=high --package-lock-only || true'
-                                }
-                            )
-                        }
-                    }
-                }
+	                                // Run npm audit as a dependency-risk signal while keeping delivery non-blocking.
+	                                'npm Audit': {
+	                                    sh 'npm audit --audit-level=high --package-lock-only || true'
+	                                },
+	                                // Scan git history + working tree for leaked secrets.
+	                                'Gitleaks': {
+	                                    sh 'mkdir -p reports/gitleaks'
+	                                    def status = sh(
+	                                        script: '''
+	                                            docker run --rm -u "$(id -u):$(id -g)" \
+	                                              -v "$WORKSPACE:/repo" -w /repo \
+	                                              gitleaks/gitleaks:latest detect \
+	                                              --source=/repo \
+	                                              --report-format json \
+	                                              --report-path /repo/reports/gitleaks/gitleaks.json \
+	                                              --no-banner
+	                                        ''',
+	                                        returnStatus: true
+	                                    )
+	                                    if (status != 0) {
+	                                        unstable("Gitleaks detected potential secrets (exit ${status}). See reports/gitleaks/gitleaks.json")
+	                                    } else {
+	                                        echo 'Gitleaks: no leaks detected.'
+	                                    }
+	                                }
+	                            )
+	                        }
+	                    }
+	                }
             }
         }
 

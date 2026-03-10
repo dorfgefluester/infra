@@ -3,6 +3,7 @@
 This repo can pull “backlog snapshots” from:
 - SonarQube (code quality / security issues via Web API)
 - Trivy (filesystem scan results via container runtime)
+- Jenkins runtime scans (Gitleaks secrets, ZAP DAST, k6 load smoke) via pipeline artifacts
 
 The goal is to make these findings easy to review and turn into upcoming tasks.
 
@@ -129,3 +130,12 @@ node scripts/quality/pull-findings.cjs --strict true
 
 - **Self-signed SonarQube TLS**: If your SonarQube uses a self-signed certificate, Node may fail TLS validation. Prefer fixing the cert chain; as a last resort for local use: `NODE_TLS_REJECT_UNAUTHORIZED=0 npm run quality:sonar`.
 - **Large issue counts**: `docs/ci/SONARQUBE_ISSUES.md` lists only the “top” issues (default 200). The full list is always in `reports/sonarqube/issues.json`.
+
+## Deployed staging scans (Jenkins artifacts)
+
+When you deploy to staging via `jenkins/dorfgefluester-staging-deploy.Jenkinsfile`, the pipeline can run:
+- **OWASP ZAP baseline (DAST)** against `http://dev-env-01/dorfgefluester/` and archive `reports/zap/*`.
+- **k6 smoke load test** against `http://dev-env-01/dorfgefluester/` and archive `reports/k6/summary.json`.
+
+In the main CI pipeline (`Jenkinsfile`), the repo also runs:
+- **Gitleaks** secrets scan and archives `reports/gitleaks/gitleaks.json`.

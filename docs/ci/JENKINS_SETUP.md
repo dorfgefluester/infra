@@ -139,10 +139,15 @@ environment {
 2. **Setup** - Verify Node.js environment
 3. **Install Dependencies** - `npm ci`
 4. **Lint & Validate** - Run validation scripts
-5. **Tests** - Jest unit tests + Playwright E2E
+5. **Tests** - Jest unit tests + optional Playwright E2E
 6. **Build** - Production build with Vite
 7. **Security Scans** - DependencyCheck, Trivy, Semgrep, npm audit
 8. **Reports** - Generate and publish reports
+
+**Playwright E2E in CI (this repo):**
+- Implemented in the root `Jenkinsfile` as stage `E2E (Release Happy Path)`.
+- Runs automatically on version branches (e.g. `0.5.4`) and can be forced via Jenkins parameter `RUN_E2E=true`.
+- Artifacts are archived: `playwright-report/**/*` + `tests/test-results/**/*` (includes screenshots/traces/videos per config).
 
 ### Key Differences:
 
@@ -244,11 +249,10 @@ sh 'npm audit --json > npm-audit.json || true'
 
 ### Issue: E2E tests fail in Jenkins
 
-**Solution**: Ensure Playwright browsers installed:
-```bash
-# On Jenkins agent
-npx playwright install --with-deps chromium firefox webkit
-```
+**Solution**: In this repo, Playwright runs inside a version-matched Playwright Docker image (so browsers are included).
+If E2E fails:
+- Open Jenkins build artifacts: `playwright-report/index.html` for the HTML report (screenshots attached).
+- Check `tests/test-results/` for per-test output (screenshots/videos/traces).
 
 ---
 
