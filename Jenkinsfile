@@ -459,7 +459,7 @@ pipeline {
 	                                        script: '''
 	                                            docker run --rm -u "$(id -u):$(id -g)" \
 	                                              -v "$WORKSPACE:/repo" -w /repo \
-	                                              gitleaks/gitleaks:latest detect \
+                                              zricethezav/gitleaks:latest detect \
 	                                              --source=/repo \
 	                                              --report-format json \
 	                                              --report-path /repo/reports/gitleaks/gitleaks.json \
