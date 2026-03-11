@@ -28,6 +28,34 @@ function severityRank(severity) {
   return index === -1 ? order.length : index;
 }
 
+function sortSummaryEntries(entries) {
+  return entries.sort((left, right) => right[1] - left[1]);
+}
+
+function formatSummaryEntries(entries) {
+  return sortSummaryEntries(entries)
+    .map(([key, value]) => `${key}=${value}`)
+    .join(', ') || 'n/a';
+}
+
+function sortIssues(issues) {
+  return [...issues].sort((left, right) => {
+    const rankDiff = severityRank(left.severity) - severityRank(right.severity);
+    if (rankDiff !== 0) {
+      return rankDiff;
+    }
+
+    return String(left.component || '').localeCompare(String(right.component || ''));
+  });
+}
+
+function renderIssueLine({ hostUrl, projectKey, issue }) {
+  const file = stripComponentPrefix(issue.component);
+  const line = issue.line ? `:${issue.line}` : '';
+  const link = `${hostUrl}/project/issues?id=${encodeURIComponent(projectKey)}&open=${encodeURIComponent(issue.key)}`;
+  return `- [${issue.type}/${issue.severity}] \`${file}${line}\` — ${issue.message} (rule: \`${issue.rule}\`) (${link})`;
+}
+
 async function fetchJson(url, { token }) {
   const res = await fetch(url, {
     headers: {
@@ -148,8 +176,8 @@ function renderMarkdown({ hostUrl, projectKey, measures, issues, maxList }) {
   lines.push('## Issue Totals (pulled)');
   lines.push('');
   lines.push(`- Total: ${summary.total}`);
-  lines.push(`- By type: ${Object.entries(summary.byType).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}=${v}`).join(', ') || 'n/a'}`);
-  lines.push(`- By severity: ${Object.entries(summary.bySeverity).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}=${v}`).join(', ') || 'n/a'}`);
+  lines.push(`- By type: ${formatSummaryEntries(Object.entries(summary.byType))}`);
+  lines.push(`- By severity: ${formatSummaryEntries(Object.entries(summary.bySeverity))}`);
   lines.push('');
 
   lines.push('## Top Issues (for backlog)');
@@ -157,18 +185,9 @@ function renderMarkdown({ hostUrl, projectKey, measures, issues, maxList }) {
   lines.push(`(Showing up to ${maxList} issues, sorted by severity.)`);
   lines.push('');
 
-  const sorted = [...issues].sort((a, b) => {
-    const r = severityRank(a.severity) - severityRank(b.severity);
-    if (r !== 0) return r;
-    return String(a.component || '').localeCompare(String(b.component || ''));
-  });
-
-  const selected = sorted.slice(0, maxList);
+  const selected = sortIssues(issues).slice(0, maxList);
   for (const issue of selected) {
-    const file = stripComponentPrefix(issue.component);
-    const line = issue.line ? `:${issue.line}` : '';
-    const link = `${hostUrl}/project/issues?id=${encodeURIComponent(projectKey)}&open=${encodeURIComponent(issue.key)}`;
-    lines.push(`- [${issue.type}/${issue.severity}] \`${file}${line}\` — ${issue.message} (rule: \`${issue.rule}\`) (${link})`);
+    lines.push(renderIssueLine({ hostUrl, projectKey, issue }));
   }
 
   lines.push('');

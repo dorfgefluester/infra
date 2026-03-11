@@ -455,28 +455,43 @@ pipeline {
 	                                // Scan workspace files for leaked secrets while excluding generated artifacts.
 	                                'Gitleaks': {
 	                                    sh 'mkdir -p reports/gitleaks'
-	                                    def status = sh(
-	                                        script: '''
-	                                            docker run --rm -u "$(id -u):$(id -g)" \
-	                                              -v "$WORKSPACE:/repo" -w /repo \
+                                    def status = sh(
+                                        script: '''
+                                            set -eu
+                                            TMPDIR="$(mktemp -d)"
+                                            cleanup() {
+                                              rm -rf "$TMPDIR"
+                                            }
+                                            trap cleanup EXIT
+
+                                            mkdir -p "$TMPDIR/repo" "$WORKSPACE/reports/gitleaks"
+                                            tar \
+                                              --exclude='./playwright-report' \
+                                              --exclude='./tests/test-results' \
+                                              --exclude='./reports' \
+                                              -cf - . | tar -C "$TMPDIR/repo" -xf -
+
+                                            docker run --rm -u "$(id -u):$(id -g)" \
+                                              -v "$TMPDIR/repo:/repo" \
+                                              -v "$WORKSPACE/reports/gitleaks:/reports" \
+                                              -w /repo \
                                               zricethezav/gitleaks:latest detect \
-	                                              --source=/repo \
-	                                              --no-git \
-	                                              --path-exclude=/repo/playwright-report \
-	                                              --path-exclude=/repo/tests/test-results \
-	                                              --path-exclude=/repo/reports \
-	                                              --report-format json \
-	                                              --report-path /repo/reports/gitleaks/gitleaks.json \
-	                                              --no-banner
-	                                        ''',
-	                                        returnStatus: true
-	                                    )
-	                                    if (status != 0) {
-	                                        unstable("Gitleaks detected potential secrets (exit ${status}). See reports/gitleaks/gitleaks.json")
-	                                    } else {
-	                                        echo 'Gitleaks: no leaks detected.'
-	                                    }
-	                                }
+                                              --source=/repo \
+                                              --no-git \
+                                              --report-format json \
+                                              --report-path /reports/gitleaks.json \
+                                              --no-banner
+                                        ''',
+                                        returnStatus: true
+                                    )
+                                    if (status == 1) {
+                                        unstable('Gitleaks detected potential secrets. See reports/gitleaks/gitleaks.json')
+                                    } else if (status != 0) {
+                                        unstable("Gitleaks execution failed (exit ${status}). See Jenkins logs for details.")
+                                    } else {
+                                        echo 'Gitleaks: no leaks detected.'
+                                    }
+                                }
 	                            )
 	                        }
 	                    }
