@@ -236,7 +236,16 @@ async function fetchHotspots({ hostUrl, token, projectKey, pageSize }) {
   const url = new URL(`${hostUrl}/api/hotspots/search`);
   url.searchParams.set('projectKey', projectKey);
   url.searchParams.set('ps', String(pageSize));
-  const data = await fetchJson(url.toString(), { token });
+  let data;
+  try {
+    data = await fetchJson(url.toString(), { token });
+  } catch (err) {
+    const message = String(err?.message || err);
+    if (message.includes('HTTP 401') || message.includes('HTTP 403')) {
+      throw new Error('Security hotspot export is not permitted for the configured SonarQube token.');
+    }
+    throw err;
+  }
 
   const hotspots = Array.isArray(data?.hotspots) ? data.hotspots : [];
   return {

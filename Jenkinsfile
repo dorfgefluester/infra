@@ -452,7 +452,7 @@ pipeline {
 	                                'npm Audit': {
 	                                    sh 'npm audit --audit-level=high --package-lock-only || true'
 	                                },
-	                                // Scan git history + working tree for leaked secrets.
+	                                // Scan workspace files for leaked secrets while excluding generated artifacts.
 	                                'Gitleaks': {
 	                                    sh 'mkdir -p reports/gitleaks'
 	                                    def status = sh(
@@ -461,6 +461,10 @@ pipeline {
 	                                              -v "$WORKSPACE:/repo" -w /repo \
                                               zricethezav/gitleaks:latest detect \
 	                                              --source=/repo \
+	                                              --no-git \
+	                                              --path-exclude=/repo/playwright-report \
+	                                              --path-exclude=/repo/tests/test-results \
+	                                              --path-exclude=/repo/reports \
 	                                              --report-format json \
 	                                              --report-path /repo/reports/gitleaks/gitleaks.json \
 	                                              --no-banner

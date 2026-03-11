@@ -6,8 +6,13 @@ function parseArgs(argv) {
     args[key] = value;
   };
 
-  for (let index = 0; index < argv.length; index++) {
-    const token = argv[index];
+  const remainingTokens = [...argv];
+  while (remainingTokens.length > 0) {
+    const token = remainingTokens.shift();
+    if (typeof token !== 'string') {
+      continue;
+    }
+
     if (!token.startsWith('--')) {
       positionals.push(token);
       continue;
@@ -22,18 +27,17 @@ function parseArgs(argv) {
     }
 
     const key = token.slice(2);
-    const next = argv[index + 1];
+    const next = remainingTokens[0];
     if (!next || next.startsWith('--')) {
       setArg(key, true);
       continue;
     }
 
     setArg(key, next);
-    index++;
+    remainingTokens.shift();
   }
 
   return { args, positionals };
 }
 
 module.exports = { parseArgs };
-
