@@ -45,27 +45,64 @@ function runDirectTrivy({ scanPath, outJson, severity, ignoreUnfixed, skipDirs }
   }
 }
 
-function renderTrivyMarkdown({ json, maxList }) {
+function summarizeTrivy(json) {
   const results = Array.isArray(json?.Results) ? json.Results : [];
 
   let vulnCount = 0;
   const bySeverity = {};
+  let fixableCount = 0;
+  const targets = new Map();
+  const packages = new Map();
   const topItems = [];
 
   for (const result of results) {
+    const targetName = result.Target || 'unknown';
     const vulnerabilities = Array.isArray(result?.Vulnerabilities) ? result.Vulnerabilities : [];
     for (const v of vulnerabilities) {
       vulnCount++;
       const sev = String(v.Severity || 'UNKNOWN');
       bySeverity[sev] = (bySeverity[sev] || 0) + 1;
+      const fixedVersion = v.FixedVersion || '';
+      const packageKey = `${v.PkgName || 'unknown'}@${result.Type || 'unknown'}`;
+
+      if (fixedVersion) {
+        fixableCount++;
+      }
+
+      targets.set(targetName, {
+        target: targetName,
+        type: result.Type || 'unknown',
+        count: (targets.get(targetName)?.count || 0) + 1,
+        critical: (targets.get(targetName)?.critical || 0) + (sev === 'CRITICAL' ? 1 : 0),
+        high: (targets.get(targetName)?.high || 0) + (sev === 'HIGH' ? 1 : 0),
+      });
+
+      const existingPackage = packages.get(packageKey) || {
+        packageName: v.PkgName || 'unknown',
+        ecosystem: result.Type || 'unknown',
+        installedVersion: v.InstalledVersion || '',
+        fixedVersions: new Set(),
+        vulnerabilities: [],
+        critical: 0,
+        high: 0,
+      };
+
+      if (fixedVersion) {
+        existingPackage.fixedVersions.add(fixedVersion);
+      }
+      existingPackage.vulnerabilities.push(v.VulnerabilityID);
+      existingPackage.critical += sev === 'CRITICAL' ? 1 : 0;
+      existingPackage.high += sev === 'HIGH' ? 1 : 0;
+      packages.set(packageKey, existingPackage);
+
       topItems.push({
         severity: sev,
         pkg: v.PkgName,
         installed: v.InstalledVersion,
-        fixed: v.FixedVersion,
+        fixed: fixedVersion,
         title: v.Title || v.VulnerabilityID,
         id: v.VulnerabilityID,
-        target: result.Target,
+        target: targetName,
       });
     }
   }
@@ -73,14 +110,51 @@ function renderTrivyMarkdown({ json, maxList }) {
   const severityOrder = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'UNKNOWN'];
   topItems.sort((a, b) => severityOrder.indexOf(a.severity) - severityOrder.indexOf(b.severity));
 
+  const packagesList = Array.from(packages.values())
+    .map((pkg) => ({
+      ...pkg,
+      fixedVersions: Array.from(pkg.fixedVersions).sort(),
+      vulnerabilityCount: pkg.vulnerabilities.length,
+      vulnerabilities: pkg.vulnerabilities.sort(),
+    }))
+    .sort((a, b) => {
+      if (b.critical !== a.critical) return b.critical - a.critical;
+      if (b.high !== a.high) return b.high - a.high;
+      return b.vulnerabilityCount - a.vulnerabilityCount;
+    });
+
+  const targetList = Array.from(targets.values()).sort((a, b) => {
+    if (b.critical !== a.critical) return b.critical - a.critical;
+    if (b.high !== a.high) return b.high - a.high;
+    return b.count - a.count;
+  });
+
+  return {
+    generatedAt: new Date().toISOString(),
+    vulnerabilityCount: vulnCount,
+    fixableCount,
+    unfixableCount: vulnCount - fixableCount,
+    bySeverity,
+    topFindings: topItems,
+    topPackages: packagesList,
+    topTargets: targetList,
+  };
+}
+
+function renderTrivyMarkdown({ summary, maxList }) {
+  const { vulnerabilityCount, fixableCount, unfixableCount, bySeverity, topFindings, topPackages, topTargets } =
+    summary;
+
   const lines = [];
   lines.push('# Trivy Findings (FS Scan Snapshot)');
   lines.push('');
-  lines.push(`Generated: ${new Date().toISOString()}`);
+  lines.push(`Generated: ${summary.generatedAt}`);
   lines.push('');
   lines.push('## Summary');
   lines.push('');
-  lines.push(`- Vulnerabilities: ${vulnCount}`);
+  lines.push(`- Vulnerabilities: ${vulnerabilityCount}`);
+  lines.push(`- Fixable now: ${fixableCount}`);
+  lines.push(`- No upstream fix yet: ${unfixableCount}`);
   lines.push(
     `- By severity: ${
       Object.entries(bySeverity)
@@ -90,12 +164,33 @@ function renderTrivyMarkdown({ json, maxList }) {
     }`,
   );
   lines.push('');
+  lines.push('## Fix First Packages');
+  lines.push('');
+  lines.push('(Packages with the highest concentration of critical/high findings and available fixes.)');
+  lines.push('');
+
+  for (const pkg of topPackages.slice(0, Math.min(maxList, 20))) {
+    const fixed = pkg.fixedVersions.length > 0 ? pkg.fixedVersions.join(', ') : 'n/a';
+    lines.push(
+      `- \`${pkg.packageName}\` [${pkg.ecosystem}] ${pkg.installedVersion || ''} → ${fixed} | critical=${pkg.critical}, high=${pkg.high}, vulns=${pkg.vulnerabilityCount}`,
+    );
+  }
+  lines.push('');
+  lines.push('## Hotspot Targets');
+  lines.push('');
+
+  for (const target of topTargets.slice(0, 10)) {
+    lines.push(
+      `- \`${target.target}\` [${target.type}] | critical=${target.critical}, high=${target.high}, total=${target.count}`,
+    );
+  }
+  lines.push('');
   lines.push('## Top Findings (for backlog)');
   lines.push('');
   lines.push(`(Showing up to ${maxList} items, sorted by severity.)`);
   lines.push('');
 
-  for (const item of topItems.slice(0, maxList)) {
+  for (const item of topFindings.slice(0, maxList)) {
     const fixed = item.fixed ? `fixed: ${item.fixed}` : 'fixed: n/a';
     lines.push(
       `- [${item.severity}] \`${item.pkg}\` ${item.installed || ''} (${fixed}) — ${item.id} (${item.target})`,
@@ -103,9 +198,15 @@ function renderTrivyMarkdown({ json, maxList }) {
   }
 
   lines.push('');
+  lines.push('## Suggested Triage');
+  lines.push('');
+  lines.push('- Upgrade fixable CRITICAL/HIGH packages first, grouped by package rather than by individual CVE.');
+  lines.push('- Review unfixable findings separately; suppress only with a documented reason and revisit on dependency updates.');
+  lines.push('- Use the target hotspots section to focus scans on the directories or lockfiles creating the most risk.');
+  lines.push('');
   lines.push('## Full Report');
   lines.push('');
-  lines.push('Use the generated JSON output for full details (targets, CVE metadata, etc.).');
+  lines.push('Use the generated JSON outputs for full details (targets, CVE metadata, fix versions, package rollups).');
   lines.push('');
 
   return lines.join('\n');
@@ -119,6 +220,7 @@ Usage:
 
 Outputs:
   --out-json reports/trivy/fs.json
+  --out-summary reports/trivy/fs-summary.json
   --out-md  docs/ci/TRIVY_FINDINGS.md
 
 Options:
@@ -150,6 +252,7 @@ function main() {
 
   const scanPath = args.path || '.';
   const outJson = args['out-json'] || 'reports/trivy/fs.json';
+  const outSummary = args['out-summary'] || 'reports/trivy/fs-summary.json';
   const outMd = args['out-md'] || 'docs/ci/TRIVY_FINDINGS.md';
 
   const severity = args.severity || 'HIGH,CRITICAL';
@@ -178,15 +281,19 @@ function main() {
   }
 
   ensureDirForFile(outJson);
+  ensureDirForFile(outSummary);
 
   const cwd = process.cwd();
 
   if ((!runtime || requestedRuntime === 'trivy') && hasNativeTrivy) {
     runDirectTrivy({ scanPath, outJson, severity, ignoreUnfixed, skipDirs });
     const json = readJson(outJson);
-    writeText(outMd, renderTrivyMarkdown({ json, maxList }));
+    const summary = summarizeTrivy(json);
+    writeText(outSummary, JSON.stringify(summary, null, 2));
+    writeText(outMd, renderTrivyMarkdown({ summary, maxList }));
 
     console.log(`Wrote Trivy findings JSON: ${outJson}`);
+    console.log(`Wrote Trivy findings summary: ${outSummary}`);
     console.log(`Wrote Trivy findings markdown: ${outMd}`);
     return;
   }
@@ -203,21 +310,26 @@ function main() {
   const cacheDir = path.join(cwd, 'reports', 'trivy', 'cache');
   const cacheDirAbs = path.resolve(cacheDir);
   const containerCacheDir = '/tmp/trivy-cache';
+  ensureDirForFile(path.join(cacheDir, '.keep'));
 
   const skipDirsContainer = skipDirs
     .map((dir) => `${containerScanPath}/${dir}`.replace(/\/+$/, ''))
     .join(',');
 
-  const baseArgs = [
-    'run',
-    '--rm',
-    '-u',
-    `${uid}:${gid}`,
+  const baseArgs = ['run', '--rm'];
+
+  if (runtime === 'podman') {
+    baseArgs.push('--userns=keep-id');
+  } else {
+    baseArgs.push('-u', `${uid}:${gid}`);
+  }
+
+  baseArgs.push(
     '-v',
     `${absScanPath}:${containerScanPath}`,
     '-v',
     `${cacheDirAbs}:${containerCacheDir}`,
-    'aquasec/trivy:latest',
+    'docker.io/aquasec/trivy:latest',
     'fs',
     containerScanPath,
     '--cache-dir',
@@ -231,7 +343,7 @@ function main() {
     '--no-progress',
     '--exit-code',
     '0',
-  ];
+  );
 
   if (ignoreUnfixed) {
     baseArgs.push('--ignore-unfixed');
@@ -247,9 +359,12 @@ function main() {
   }
 
   const json = readJson(outJson);
-  writeText(outMd, renderTrivyMarkdown({ json, maxList }));
+  const summary = summarizeTrivy(json);
+  writeText(outSummary, JSON.stringify(summary, null, 2));
+  writeText(outMd, renderTrivyMarkdown({ summary, maxList }));
 
   console.log(`Wrote Trivy findings JSON: ${outJson}`);
+  console.log(`Wrote Trivy findings summary: ${outSummary}`);
   console.log(`Wrote Trivy findings markdown: ${outMd}`);
 }
 

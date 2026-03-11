@@ -35,6 +35,7 @@ pipeline {
         NPM_CACHE_DIR = "${WORKSPACE_TMP}/.npm-cache"
         TRIVY_FS_CACHE_DIR = "${WORKSPACE_TMP}/.trivy-fs-cache"
         TRIVY_IMAGE_CACHE_DIR = "${WORKSPACE_TMP}/.trivy-image-cache"
+        DOCKER_BUILDX_CACHE_DIR = "${WORKSPACE_TMP}/.docker-buildx-cache"
     }
 
     stages {
@@ -272,7 +273,8 @@ pipeline {
                             }
                         }
 
-                        // Execute tests and publish JUnit-compatible reports for Jenkins visibility.
+                        // Execute tests once with coverage enabled so JUnit, coverage artifacts, and Sonar inputs
+                        // are produced from a single Jest invocation.
                         stage('Test') {
                             steps {
                                 script {
@@ -281,10 +283,10 @@ pipeline {
                                     sh "mkdir -p ${junitDir}"
                                     if (hasJunit) {
                                         withEnv(["JEST_JUNIT_OUTPUT_DIR=${junitDir}", "JEST_JUNIT_OUTPUT_NAME=jest-junit.xml"]) {
-                                            sh 'npm test -- --ci --coverage=false --reporters=default --reporters=jest-junit'
+                                            sh 'npm test -- --ci --coverage --reporters=default --reporters=jest-junit'
                                         }
                                     } else {
-                                        sh 'npm test -- --ci --coverage=false --json --outputFile=tests/junit/jest.json'
+                                        sh 'npm test -- --ci --coverage --json --outputFile=tests/junit/jest.json'
                                         sh 'node scripts/jest-json-to-junit.cjs tests/junit/jest.json tests/junit/jest-junit.xml'
                                     }
                                 }
@@ -292,22 +294,9 @@ pipeline {
                             post {
                                 always {
                                     junit testResults: 'tests/junit/**/*.xml', allowEmptyResults: true
+                                    archiveArtifacts artifacts: 'tests/coverage/**/*', fingerprint: true, allowEmptyArchive: true
                                 }
                             }
-                        }
-                    }
-                }
-
-                // Publish coverage as a non-blocking quality signal to avoid halting delivery.
-                stage('Coverage (Non-Blocking)') {
-                    steps {
-                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                            sh 'npm run test:coverage --if-present'
-                        }
-                    }
-                    post {
-                        always {
-                            archiveArtifacts artifacts: 'tests/coverage/**/*', fingerprint: true, allowEmptyArchive: true
                         }
                     }
                 }
@@ -439,6 +428,7 @@ pipeline {
                                           --format json --output /src/reports/trivy/fs.json \
                                           --exit-code 0 --severity HIGH,CRITICAL --ignore-unfixed || true
                                     '''
+                                    sh 'node scripts/quality/trivy-summary.cjs --input reports/trivy/fs.json --label "Trivy FS Scan"'
                                 },
                                 // Run Semgrep SAST ruleset for fast pattern-based vulnerability detection.
                                 'Semgrep': {
@@ -708,7 +698,26 @@ pipeline {
                             env.GIT_SHA = resolvedTag
                             env.IMAGE_TAG = resolvedTag
                             echo "Using image tag ${resolvedTag}."
-                            sh "docker build -t ${IMAGE_REPO}:${resolvedTag} ."
+                            def buildxCacheDir = "${env.DOCKER_BUILDX_CACHE_DIR}"
+                            sh """
+                                set -eu
+                                mkdir -p '${buildxCacheDir}'
+                                if docker buildx version >/dev/null 2>&1; then
+                                  export DOCKER_BUILDKIT=1
+                                  rm -rf '${buildxCacheDir}-new'
+                                  docker buildx build \
+                                    --load \
+                                    --tag ${IMAGE_REPO}:${resolvedTag} \
+                                    --cache-from type=local,src='${buildxCacheDir}' \
+                                    --cache-to type=local,dest='${buildxCacheDir}-new',mode=max \
+                                    .
+                                  rm -rf '${buildxCacheDir}'
+                                  mv '${buildxCacheDir}-new' '${buildxCacheDir}'
+                                else
+                                  echo 'docker buildx unavailable on agent; falling back to classic docker build.'
+                                  docker build -t ${IMAGE_REPO}:${resolvedTag} .
+                                fi
+                            """
                         }
                     }
                 }
@@ -735,27 +744,49 @@ pipeline {
                                 'ghcr.io/aquasecurity/trivy-db:2',
                                 'public.ecr.aws/aquasecurity/trivy-db:2'
                             ]
-                            def dbReady = false
-                            for (def repo : dbRepos) {
-                                echo "Attempting Trivy DB download from ${repo}..."
-                                def dbStatus = sh(
-                                    script: """
-                                        docker run --rm \
-                                          -v '${trivyCacheDir}:/tmp/trivy-cache' \
-                                          aquasec/trivy image \
-                                          --cache-dir /tmp/trivy-cache \
-                                          --download-db-only \
-                                          --db-repository ${repo}
-                                    """,
-                                    returnStatus: true
-                                )
-                                if (dbStatus == 0) {
-                                    dbReady = true
-                                    break
+                            def trivyDbMetadata = "${trivyCacheDir}/db/metadata.json"
+                            def trivyDbTimestamp = "${trivyCacheDir}/.db-updated-at"
+                            def trivyDbTtlSeconds = 12 * 60 * 60
+                            def shouldRefreshDb = sh(
+                                script: """
+                                    set -eu
+                                    if [ ! -s '${trivyDbMetadata}' ] || [ ! -f '${trivyDbTimestamp}' ]; then
+                                      exit 0
+                                    fi
+                                    now=\$(date +%s)
+                                    updated=\$(cat '${trivyDbTimestamp}' 2>/dev/null || echo 0)
+                                    age=\$((now - updated))
+                                    [ "\$age" -ge '${trivyDbTtlSeconds}' ]
+                                """,
+                                returnStatus: true
+                            ) == 0
+
+                            if (shouldRefreshDb) {
+                                def dbReady = false
+                                for (def repo : dbRepos) {
+                                    echo "Refreshing Trivy DB from ${repo}..."
+                                    def dbStatus = sh(
+                                        script: """
+                                            docker run --rm \
+                                              -v '${trivyCacheDir}:/tmp/trivy-cache' \
+                                              aquasec/trivy image \
+                                              --cache-dir /tmp/trivy-cache \
+                                              --download-db-only \
+                                              --db-repository ${repo}
+                                        """,
+                                        returnStatus: true
+                                    )
+                                    if (dbStatus == 0) {
+                                        sh "date +%s > '${trivyDbTimestamp}'"
+                                        dbReady = true
+                                        break
+                                    }
                                 }
-                            }
-                            if (!dbReady) {
-                                error('Unable to download Trivy vulnerability DB from configured repositories.')
+                                if (!dbReady) {
+                                    error('Unable to download Trivy vulnerability DB from configured repositories.')
+                                }
+                            } else {
+                                echo 'Using cached Trivy DB (fresh enough for this build).'
                             }
 
                             def trivyCommand = """
@@ -770,11 +801,16 @@ pipeline {
                                   --exit-code 1 --severity ${isReleaseBranch ? 'CRITICAL' : 'HIGH,CRITICAL'} --ignore-unfixed \
                                   "${IMAGE_REPO}:${imageTag}"
                             """
-                            if (isReleaseBranch) {
-                                sh trivyCommand
-                            } else {
+                            def trivyStatus = sh(script: trivyCommand, returnStatus: true)
+                            if (fileExists('reports/trivy/image.json')) {
+                                sh 'node scripts/quality/trivy-summary.cjs --input reports/trivy/image.json --label "Trivy Image Scan"'
+                            }
+                            if (trivyStatus != 0) {
+                                if (isReleaseBranch) {
+                                    error("Trivy image scan failed with exit code ${trivyStatus}.")
+                                }
                                 catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                                    sh trivyCommand
+                                    error("Trivy image scan reported vulnerabilities above the configured threshold (exit ${trivyStatus}).")
                                 }
                             }
                         }
