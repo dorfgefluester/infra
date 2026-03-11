@@ -25,7 +25,7 @@ async function main() {
     '--formatter-enabled=false',
     '--organize-imports-enabled=false',
     '--diagnostic-level=error',
-    '--reporter=summary'
+    '--reporter=summary',
   ]);
 
   process.exit(status);
@@ -35,4 +35,3 @@ main().catch((err) => {
   console.error(String(err?.stack || err));
   process.exit(2);
 });
-

@@ -8,7 +8,8 @@ function commandExists(command) {
 }
 
 function printHelp() {
-  console.log(`
+  console.log(
+    `
 Usage:
   node scripts/quality/pull-findings.cjs
 
@@ -26,7 +27,8 @@ Options:
   --strict true|false (default false)
   --sonar-args "<args passed to sonarqube-export.cjs>"
   --trivy-args "<args passed to trivy-fs-scan.cjs>"
-`.trim());
+`.trim(),
+  );
 }
 
 function parseBoolean(value, defaultValue) {
@@ -77,7 +79,9 @@ function runNode(scriptPath, scriptArgs) {
 function shouldRunSonar(sonarArgs) {
   const hasHostArg = sonarArgs.includes('--host-url');
   const hasTokenArg = sonarArgs.includes('--token');
-  return Boolean((hasHostArg || process.env.SONAR_HOST_URL) && (hasTokenArg || process.env.SONAR_TOKEN));
+  return Boolean(
+    (hasHostArg || process.env.SONAR_HOST_URL) && (hasTokenArg || process.env.SONAR_TOKEN),
+  );
 }
 
 function shouldRunTrivy() {
@@ -102,7 +106,8 @@ function main() {
 
   if (runSonar) {
     if (!shouldRunSonar(sonarArgs)) {
-      const msg = 'Skipping SonarQube export: missing SONAR_HOST_URL/SONAR_TOKEN (or --host-url/--token via --sonar-args).';
+      const msg =
+        'Skipping SonarQube export: missing SONAR_HOST_URL/SONAR_TOKEN (or --host-url/--token via --sonar-args).';
       if (strict) {
         console.error(msg);
         exitCode = 1;
