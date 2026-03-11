@@ -8,7 +8,8 @@ function commandExists(command) {
 }
 
 function printHelp() {
-  console.log(`
+  console.log(
+    `
 Usage:
   node scripts/quality/pull-findings.cjs
 
@@ -26,7 +27,8 @@ Options:
   --strict true|false (default false)
   --sonar-args "<args passed to sonarqube-export.cjs>"
   --trivy-args "<args passed to trivy-fs-scan.cjs>"
-`.trim());
+`.trim(),
+  );
 }
 
 function parseBoolean(value, defaultValue) {
@@ -77,34 +79,13 @@ function runNode(scriptPath, scriptArgs) {
 function shouldRunSonar(sonarArgs) {
   const hasHostArg = sonarArgs.includes('--host-url');
   const hasTokenArg = sonarArgs.includes('--token');
-  return Boolean((hasHostArg || process.env.SONAR_HOST_URL) && (hasTokenArg || process.env.SONAR_TOKEN));
+  return Boolean(
+    (hasHostArg || process.env.SONAR_HOST_URL) && (hasTokenArg || process.env.SONAR_TOKEN),
+  );
 }
 
 function shouldRunTrivy() {
   return commandExists('docker') || commandExists('podman') || commandExists('trivy');
-}
-
-function handleSkippedTool({ enabled, canRun, strict, message }) {
-  if (!enabled || canRun) {
-    return 0;
-  }
-
-  if (strict) {
-    console.error(message);
-    return 1;
-  }
-
-  console.warn(message);
-  return 0;
-}
-
-function runOptionalNodeScript({ enabled, canRun, strict, message, scriptPath, scriptArgs }) {
-  const skippedCode = handleSkippedTool({ enabled, canRun, strict, message });
-  if (!enabled || skippedCode !== 0 || !canRun) {
-    return skippedCode;
-  }
-
-  return runNode(scriptPath, scriptArgs);
 }
 
 function main() {
@@ -123,28 +104,35 @@ function main() {
 
   let exitCode = 0;
 
-  const sonarCode = runOptionalNodeScript({
-    enabled: runSonar,
-    canRun: shouldRunSonar(sonarArgs),
-    strict,
-    message: 'Skipping SonarQube export: missing SONAR_HOST_URL/SONAR_TOKEN (or --host-url/--token via --sonar-args).',
-    scriptPath: 'scripts/quality/sonarqube-export.cjs',
-    scriptArgs: sonarArgs,
-  });
-  if (sonarCode !== 0) {
-    exitCode = sonarCode;
+  if (runSonar) {
+    if (!shouldRunSonar(sonarArgs)) {
+      const msg =
+        'Skipping SonarQube export: missing SONAR_HOST_URL/SONAR_TOKEN (or --host-url/--token via --sonar-args).';
+      if (strict) {
+        console.error(msg);
+        exitCode = 1;
+      } else {
+        console.warn(msg);
+      }
+    } else {
+      const code = runNode('scripts/quality/sonarqube-export.cjs', sonarArgs);
+      if (code !== 0) exitCode = code;
+    }
   }
 
-  const trivyCode = runOptionalNodeScript({
-    enabled: runTrivy,
-    canRun: shouldRunTrivy(),
-    strict,
-    message: 'Skipping Trivy FS scan: install docker, podman, or trivy binary.',
-    scriptPath: 'scripts/quality/trivy-fs-scan.cjs',
-    scriptArgs: trivyArgs,
-  });
-  if (trivyCode !== 0) {
-    exitCode = trivyCode;
+  if (runTrivy) {
+    if (!shouldRunTrivy()) {
+      const msg = 'Skipping Trivy FS scan: install docker, podman, or trivy binary.';
+      if (strict) {
+        console.error(msg);
+        exitCode = 1;
+      } else {
+        console.warn(msg);
+      }
+    } else {
+      const code = runNode('scripts/quality/trivy-fs-scan.cjs', trivyArgs);
+      if (code !== 0) exitCode = code;
+    }
   }
 
   process.exitCode = exitCode;

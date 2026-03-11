@@ -43,7 +43,7 @@ function impactsFor(issue) {
     .map((impact) => {
       return {
         softwareQuality: impact?.softwareQuality,
-        severity: impact?.severity
+        severity: impact?.severity,
       };
     })
     .filter((impact) => impact.softwareQuality || impact.severity);
@@ -83,7 +83,14 @@ async function tryFetchIssuesPage({ hostUrl, token, params }) {
   }
 }
 
-async function fetchAllIssues({ hostUrl, token, projectKey, impactSoftwareQuality, impactSeverity, pageSize }) {
+async function fetchAllIssues({
+  hostUrl,
+  token,
+  projectKey,
+  impactSoftwareQuality,
+  impactSeverity,
+  pageSize,
+}) {
   const issues = [];
   let page = 1;
   let total = null;
@@ -99,8 +106,8 @@ async function fetchAllIssues({ hostUrl, token, projectKey, impactSoftwareQualit
         ps: pageSize,
         p: page,
         impactSoftwareQualities: impactSoftwareQuality,
-        impactSeverities: impactSeverity
-      }
+        impactSeverities: impactSeverity,
+      },
     });
 
     if (total === null) {
@@ -117,14 +124,23 @@ async function fetchAllIssues({ hostUrl, token, projectKey, impactSoftwareQualit
     fetched += pageIssues.length;
     page++;
     if (page > 200) {
-      throw new Error('Aborting SonarQube pagination after 200 pages (unexpectedly large response).');
+      throw new Error(
+        'Aborting SonarQube pagination after 200 pages (unexpectedly large response).',
+      );
     }
   }
 
   return { issues, total: total ?? issues.length };
 }
 
-async function fetchAllIssuesByTypeSeverity({ hostUrl, token, projectKey, types, severities, pageSize }) {
+async function fetchAllIssuesByTypeSeverity({
+  hostUrl,
+  token,
+  projectKey,
+  types,
+  severities,
+  pageSize,
+}) {
   const issues = [];
   let page = 1;
   let total = null;
@@ -140,8 +156,8 @@ async function fetchAllIssuesByTypeSeverity({ hostUrl, token, projectKey, types,
         ps: pageSize,
         p: page,
         types,
-        severities
-      }
+        severities,
+      },
     });
 
     if (total === null) {
@@ -158,7 +174,9 @@ async function fetchAllIssuesByTypeSeverity({ hostUrl, token, projectKey, types,
     fetched += pageIssues.length;
     page++;
     if (page > 200) {
-      throw new Error('Aborting SonarQube pagination after 200 pages (unexpectedly large response).');
+      throw new Error(
+        'Aborting SonarQube pagination after 200 pages (unexpectedly large response).',
+      );
     }
   }
 
@@ -173,14 +191,24 @@ async function fetchImpactOrFallback({
   impactSeverity,
   pageSize,
   fallbackTypes,
-  fallbackSeverities
+  fallbackSeverities,
 }) {
   try {
-    return await fetchAllIssues({ hostUrl, token, projectKey, impactSoftwareQuality, impactSeverity, pageSize });
+    return await fetchAllIssues({
+      hostUrl,
+      token,
+      projectKey,
+      impactSoftwareQuality,
+      impactSeverity,
+      pageSize,
+    });
   } catch (err) {
     const msg = String(err?.message || err);
     const looksLikeImpactUnsupported =
-      msg.includes('impactSoftwareQualities') || msg.includes('impactSeverities') || msg.includes('Unrecognized') || msg.includes('Unknown');
+      msg.includes('impactSoftwareQualities') ||
+      msg.includes('impactSeverities') ||
+      msg.includes('Unrecognized') ||
+      msg.includes('Unknown');
     if (!looksLikeImpactUnsupported) {
       throw err;
     }
@@ -190,7 +218,7 @@ async function fetchImpactOrFallback({
       projectKey,
       types: fallbackTypes,
       severities: fallbackSeverities,
-      pageSize
+      pageSize,
     });
   }
 }
@@ -201,7 +229,7 @@ async function fetchQualityGate({ hostUrl, token, projectKey }) {
   const data = await fetchJson(url.toString(), { token });
   return {
     status: data?.projectStatus?.status ?? null,
-    conditions: Array.isArray(data?.projectStatus?.conditions) ? data.projectStatus.conditions : []
+    conditions: Array.isArray(data?.projectStatus?.conditions) ? data.projectStatus.conditions : [],
   };
 }
 
@@ -216,7 +244,7 @@ async function fetchMeasures({ hostUrl, token, projectKey }) {
     'vulnerabilities',
     'code_smells',
     'security_hotspots',
-    'ncloc'
+    'ncloc',
   ];
 
   const url = new URL(`${hostUrl}/api/measures/component`);
@@ -242,7 +270,9 @@ async function fetchHotspots({ hostUrl, token, projectKey, pageSize }) {
   } catch (err) {
     const message = String(err?.message || err);
     if (message.includes('HTTP 401') || message.includes('HTTP 403')) {
-      throw new Error('Security hotspot export is not permitted for the configured SonarQube token.');
+      throw new Error(
+        'Security hotspot export is not permitted for the configured SonarQube token.',
+      );
     }
     throw err;
   }
@@ -255,26 +285,36 @@ async function fetchHotspots({ hostUrl, token, projectKey, pageSize }) {
         message: h?.message ?? null,
         file: stripComponentPrefix(h?.component),
         line: h?.line ?? null,
-        vulnerabilityProbability: h?.vulnerabilityProbability ?? null
+        vulnerabilityProbability: h?.vulnerabilityProbability ?? null,
       };
-    })
+    }),
   };
 }
 
 function toReportIssue(issue, { defaultImpact } = {}) {
   const impacts = impactsFor(issue);
-  const normalizedImpacts = impacts.length > 0 ? impacts : (defaultImpact ? [defaultImpact] : []);
+  const normalizedImpacts = impacts.length > 0 ? impacts : defaultImpact ? [defaultImpact] : [];
   return {
     key: issue?.key ?? null,
     message: issue?.message ?? null,
     file: stripComponentPrefix(issue?.component),
     line: issue?.line ?? null,
     rule: issue?.rule ?? null,
-    impacts: normalizedImpacts
+    impacts: normalizedImpacts,
   };
 }
 
-function renderMarkdown({ hostUrl, projectKey, qualityGate, measures, relHigh, relMed, secHigh, maintHigh, hotspots }) {
+function renderMarkdown({
+  hostUrl,
+  projectKey,
+  qualityGate,
+  measures,
+  relHigh,
+  relMed,
+  secHigh,
+  maintHigh,
+  hotspots,
+}) {
   const securityRating = ratingToLetter(measures?.security_rating);
   const reliabilityRating = ratingToLetter(measures?.reliability_rating);
   const maintainabilityRating = ratingToLetter(measures?.sqale_rating);
@@ -307,9 +347,15 @@ function renderMarkdown({ hostUrl, projectKey, qualityGate, measures, relHigh, r
 
   lines.push('## Measures');
   lines.push('');
-  lines.push(`- Security: ${securityRating ?? measures?.security_rating ?? 'n/a'} (${measures?.vulnerabilities ?? 'n/a'} vulnerabilities)`);
-  lines.push(`- Reliability: ${reliabilityRating ?? measures?.reliability_rating ?? 'n/a'} (${measures?.bugs ?? 'n/a'} bugs)`);
-  lines.push(`- Maintainability: ${maintainabilityRating ?? measures?.sqale_rating ?? 'n/a'} (${measures?.code_smells ?? 'n/a'} code smells)`);
+  lines.push(
+    `- Security: ${securityRating ?? measures?.security_rating ?? 'n/a'} (${measures?.vulnerabilities ?? 'n/a'} vulnerabilities)`,
+  );
+  lines.push(
+    `- Reliability: ${reliabilityRating ?? measures?.reliability_rating ?? 'n/a'} (${measures?.bugs ?? 'n/a'} bugs)`,
+  );
+  lines.push(
+    `- Maintainability: ${maintainabilityRating ?? measures?.sqale_rating ?? 'n/a'} (${measures?.code_smells ?? 'n/a'} code smells)`,
+  );
   lines.push(`- Coverage: ${measures?.coverage ?? 'n/a'}% (ncloc: ${measures?.ncloc ?? 'n/a'})`);
   lines.push(`- Duplications: ${measures?.duplicated_lines_density ?? 'n/a'}%`);
   lines.push(`- Hotspots: ${measures?.security_hotspots ?? 'n/a'}`);
@@ -356,7 +402,8 @@ function renderMarkdown({ hostUrl, projectKey, qualityGate, measures, relHigh, r
 }
 
 function printHelp() {
-  console.log(`
+  console.log(
+    `
 Usage:
   node scripts/quality/sonar-report.cjs --host-url <url> --token <token> [--project-key dorfgefluester]
 
@@ -370,7 +417,8 @@ Outputs (defaults):
 Behavior:
   --strict true|false   (default true)
   Exits with code 1 when either HIGH-impact Reliability or HIGH-impact Security issues exist (when strict).
-`.trim());
+`.trim(),
+  );
 }
 
 async function main() {
@@ -382,7 +430,8 @@ async function main() {
 
   const hostUrl = normalizeHostUrl(args['host-url'] || args.host || process.env.SONAR_HOST_URL);
   const token = args.token || process.env.SONAR_TOKEN || process.env.SONAR_AUTH_TOKEN || '';
-  const projectKey = args['project-key'] || args.project || process.env.SONAR_PROJECT_KEY || DEFAULT_PROJECT_KEY;
+  const projectKey =
+    args['project-key'] || args.project || process.env.SONAR_PROJECT_KEY || DEFAULT_PROJECT_KEY;
 
   const outJson = args['out-json'] || 'reports/sonarqube/sonar-report.json';
   const outMd = args['out-md'] || 'reports/sonarqube/sonar-report.md';
@@ -390,8 +439,12 @@ async function main() {
   const strict = parseBoolean(args.strict, true);
   const pageSize = Number(args['page-size'] || DEFAULT_PAGE_SIZE);
 
-  if (!hostUrl) throw new Error('Missing SonarQube host URL. Provide --host-url/--host or set SONAR_HOST_URL.');
-  if (!token) throw new Error('Missing SonarQube token. Provide --token or set SONAR_TOKEN/SONAR_AUTH_TOKEN.');
+  if (!hostUrl)
+    throw new Error('Missing SonarQube host URL. Provide --host-url/--host or set SONAR_HOST_URL.');
+  if (!token)
+    throw new Error(
+      'Missing SonarQube token. Provide --token or set SONAR_TOKEN/SONAR_AUTH_TOKEN.',
+    );
 
   const [qualityGate, measures, relHigh, relMed, secHigh, maintHigh] = await Promise.all([
     fetchQualityGate({ hostUrl, token, projectKey }),
@@ -404,7 +457,7 @@ async function main() {
       impactSeverity: 'HIGH',
       pageSize,
       fallbackTypes: 'BUG',
-      fallbackSeverities: 'BLOCKER,CRITICAL'
+      fallbackSeverities: 'BLOCKER,CRITICAL',
     }),
     fetchImpactOrFallback({
       hostUrl,
@@ -414,7 +467,7 @@ async function main() {
       impactSeverity: 'MEDIUM',
       pageSize,
       fallbackTypes: 'BUG',
-      fallbackSeverities: 'MAJOR'
+      fallbackSeverities: 'MAJOR',
     }),
     fetchImpactOrFallback({
       hostUrl,
@@ -424,7 +477,7 @@ async function main() {
       impactSeverity: 'HIGH',
       pageSize,
       fallbackTypes: 'VULNERABILITY',
-      fallbackSeverities: 'BLOCKER,CRITICAL'
+      fallbackSeverities: 'BLOCKER,CRITICAL',
     }),
     fetchImpactOrFallback({
       hostUrl,
@@ -434,8 +487,8 @@ async function main() {
       impactSeverity: 'HIGH',
       pageSize,
       fallbackTypes: 'CODE_SMELL',
-      fallbackSeverities: 'BLOCKER,CRITICAL'
-    })
+      fallbackSeverities: 'BLOCKER,CRITICAL',
+    }),
   ]);
 
   let hotspots = null;
@@ -452,40 +505,69 @@ async function main() {
     qualityGate,
     measures,
     reliability_high: relHigh.issues.map((issue) =>
-      toReportIssue(issue, { defaultImpact: { softwareQuality: 'RELIABILITY', severity: 'HIGH' } })
+      toReportIssue(issue, { defaultImpact: { softwareQuality: 'RELIABILITY', severity: 'HIGH' } }),
     ),
     reliability_medium: relMed.issues.map((issue) =>
-      toReportIssue(issue, { defaultImpact: { softwareQuality: 'RELIABILITY', severity: 'MEDIUM' } })
+      toReportIssue(issue, {
+        defaultImpact: { softwareQuality: 'RELIABILITY', severity: 'MEDIUM' },
+      }),
     ),
     security_high: secHigh.issues.map((issue) =>
-      toReportIssue(issue, { defaultImpact: { softwareQuality: 'SECURITY', severity: 'HIGH' } })
+      toReportIssue(issue, { defaultImpact: { softwareQuality: 'SECURITY', severity: 'HIGH' } }),
     ),
     maintainability_high: maintHigh.issues.map((issue) =>
-      toReportIssue(issue, { defaultImpact: { softwareQuality: 'MAINTAINABILITY', severity: 'HIGH' } })
+      toReportIssue(issue, {
+        defaultImpact: { softwareQuality: 'MAINTAINABILITY', severity: 'HIGH' },
+      }),
     ),
     totals: {
       reliability_high: relHigh.total,
       reliability_medium: relMed.total,
       security_high: secHigh.total,
       maintainability_high: maintHigh.total,
-      hotspots: hotspots?.total ?? null
+      hotspots: hotspots?.total ?? null,
     },
     queryMode: {
       reliability_high: relHigh.fallback ? 'fallback' : 'impact',
       reliability_medium: relMed.fallback ? 'fallback' : 'impact',
       security_high: secHigh.fallback ? 'fallback' : 'impact',
-      maintainability_high: maintHigh.fallback ? 'fallback' : 'impact'
+      maintainability_high: maintHigh.fallback ? 'fallback' : 'impact',
     },
-    hotspots
+    hotspots,
   };
 
   writeJson(outJson, report);
-  writeText(outMd, renderMarkdown({ hostUrl, projectKey, qualityGate, measures, relHigh: { ...relHigh, issues: report.reliability_high }, relMed: { ...relMed, issues: report.reliability_medium }, secHigh: { ...secHigh, issues: report.security_high }, maintHigh: { ...maintHigh, issues: report.maintainability_high }, hotspots }));
+  writeText(
+    outMd,
+    renderMarkdown({
+      hostUrl,
+      projectKey,
+      qualityGate,
+      measures,
+      relHigh: { ...relHigh, issues: report.reliability_high },
+      relMed: { ...relMed, issues: report.reliability_medium },
+      secHigh: { ...secHigh, issues: report.security_high },
+      maintHigh: { ...maintHigh, issues: report.maintainability_high },
+      hotspots,
+    }),
+  );
 
   // Also print the markdown to stdout for quick inspection (matches the bash-script intent).
-  console.log(renderMarkdown({ hostUrl, projectKey, qualityGate, measures, relHigh: { ...relHigh, issues: report.reliability_high }, relMed: { ...relMed, issues: report.reliability_medium }, secHigh: { ...secHigh, issues: report.security_high }, maintHigh: { ...maintHigh, issues: report.maintainability_high }, hotspots }));
+  console.log(
+    renderMarkdown({
+      hostUrl,
+      projectKey,
+      qualityGate,
+      measures,
+      relHigh: { ...relHigh, issues: report.reliability_high },
+      relMed: { ...relMed, issues: report.reliability_medium },
+      secHigh: { ...secHigh, issues: report.security_high },
+      maintHigh: { ...maintHigh, issues: report.maintainability_high },
+      hotspots,
+    }),
+  );
 
-  const gateTriggered = (relHigh.total > 0) || (secHigh.total > 0);
+  const gateTriggered = relHigh.total > 0 || secHigh.total > 0;
   if (strict && gateTriggered) {
     process.exitCode = 1;
   }

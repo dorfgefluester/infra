@@ -28,7 +28,7 @@ function runDirectTrivy({ scanPath, outJson, severity, ignoreUnfixed, skipDirs }
     severity,
     '--no-progress',
     '--exit-code',
-    '0'
+    '0',
   ];
 
   if (ignoreUnfixed) {
@@ -65,7 +65,7 @@ function renderTrivyMarkdown({ json, maxList }) {
         fixed: v.FixedVersion,
         title: v.Title || v.VulnerabilityID,
         id: v.VulnerabilityID,
-        target: result.Target
+        target: result.Target,
       });
     }
   }
@@ -81,7 +81,14 @@ function renderTrivyMarkdown({ json, maxList }) {
   lines.push('## Summary');
   lines.push('');
   lines.push(`- Vulnerabilities: ${vulnCount}`);
-  lines.push(`- By severity: ${Object.entries(bySeverity).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}=${v}`).join(', ') || 'n/a'}`);
+  lines.push(
+    `- By severity: ${
+      Object.entries(bySeverity)
+        .sort((a, b) => b[1] - a[1])
+        .map(([k, v]) => `${k}=${v}`)
+        .join(', ') || 'n/a'
+    }`,
+  );
   lines.push('');
   lines.push('## Top Findings (for backlog)');
   lines.push('');
@@ -90,7 +97,9 @@ function renderTrivyMarkdown({ json, maxList }) {
 
   for (const item of topItems.slice(0, maxList)) {
     const fixed = item.fixed ? `fixed: ${item.fixed}` : 'fixed: n/a';
-    lines.push(`- [${item.severity}] \`${item.pkg}\` ${item.installed || ''} (${fixed}) — ${item.id} (${item.target})`);
+    lines.push(
+      `- [${item.severity}] \`${item.pkg}\` ${item.installed || ''} (${fixed}) — ${item.id} (${item.target})`,
+    );
   }
 
   lines.push('');
@@ -103,7 +112,8 @@ function renderTrivyMarkdown({ json, maxList }) {
 }
 
 function printHelp() {
-  console.log(`
+  console.log(
+    `
 Usage:
   node scripts/quality/trivy-fs-scan.cjs [--path .]
 
@@ -117,7 +127,8 @@ Options:
   --skip-dirs node_modules,dist,tests/coverage,playwright-report
   --max-list 200
   --runtime docker|podman|trivy
-`.trim());
+`.trim(),
+  );
 }
 
 function parseBoolean(value, defaultValue) {
@@ -143,7 +154,8 @@ function main() {
 
   const severity = args.severity || 'HIGH,CRITICAL';
   const ignoreUnfixed = parseBoolean(args['ignore-unfixed'], true);
-  const skipDirsRaw = args['skip-dirs'] || 'node_modules,dist,tests/coverage,playwright-report,tests/test-results';
+  const skipDirsRaw =
+    args['skip-dirs'] || 'node_modules,dist,tests/coverage,playwright-report,tests/test-results';
   const skipDirs = String(skipDirsRaw)
     .split(',')
     .map((s) => s.trim())
@@ -152,10 +164,13 @@ function main() {
   const maxList = Number(args['max-list'] || 200);
 
   const requestedRuntime = args.runtime ? String(args.runtime).trim().toLowerCase() : '';
-  const runtime = requestedRuntime && requestedRuntime !== 'trivy' ? requestedRuntime : pickContainerRuntime();
+  const runtime =
+    requestedRuntime && requestedRuntime !== 'trivy' ? requestedRuntime : pickContainerRuntime();
   const hasNativeTrivy = commandExists('trivy');
   if (!runtime && !hasNativeTrivy) {
-    throw new Error('No Trivy runtime found. Install docker/podman or trivy binary to generate FS findings.');
+    throw new Error(
+      'No Trivy runtime found. Install docker/podman or trivy binary to generate FS findings.',
+    );
   }
 
   if (runtime && !['docker', 'podman'].includes(runtime)) {
@@ -215,7 +230,7 @@ function main() {
     severity,
     '--no-progress',
     '--exit-code',
-    '0'
+    '0',
   ];
 
   if (ignoreUnfixed) {

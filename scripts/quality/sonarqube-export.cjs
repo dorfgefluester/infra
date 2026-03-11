@@ -28,39 +28,11 @@ function severityRank(severity) {
   return index === -1 ? order.length : index;
 }
 
-function sortSummaryEntries(entries) {
-  return entries.sort((left, right) => right[1] - left[1]);
-}
-
-function formatSummaryEntries(entries) {
-  return sortSummaryEntries(entries)
-    .map(([key, value]) => `${key}=${value}`)
-    .join(', ') || 'n/a';
-}
-
-function sortIssues(issues) {
-  return [...issues].sort((left, right) => {
-    const rankDiff = severityRank(left.severity) - severityRank(right.severity);
-    if (rankDiff !== 0) {
-      return rankDiff;
-    }
-
-    return String(left.component || '').localeCompare(String(right.component || ''));
-  });
-}
-
-function renderIssueLine({ hostUrl, projectKey, issue }) {
-  const file = stripComponentPrefix(issue.component);
-  const line = issue.line ? `:${issue.line}` : '';
-  const link = `${hostUrl}/project/issues?id=${encodeURIComponent(projectKey)}&open=${encodeURIComponent(issue.key)}`;
-  return `- [${issue.type}/${issue.severity}] \`${file}${line}\` — ${issue.message} (rule: \`${issue.rule}\`) (${link})`;
-}
-
 async function fetchJson(url, { token }) {
   const res = await fetch(url, {
     headers: {
-      Authorization: `Basic ${Buffer.from(`${token}:`).toString('base64')}`
-    }
+      Authorization: `Basic ${Buffer.from(`${token}:`).toString('base64')}`,
+    },
   });
   if (!res.ok) {
     const text = await res.text().catch(() => '');
@@ -80,7 +52,7 @@ async function fetchMeasures({ hostUrl, token, projectKey }) {
     'coverage',
     'lines_to_cover',
     'duplicated_lines_density',
-    'duplicated_lines'
+    'duplicated_lines',
   ];
 
   const url = new URL(`${hostUrl}/api/measures/component`);
@@ -127,7 +99,9 @@ async function fetchAllIssues({ hostUrl, token, projectKey, types }) {
       fetchedForType += pageIssues.length;
       page++;
       if (page > 200) {
-        throw new Error('Aborting SonarQube pagination after 200 pages (unexpectedly large response).');
+        throw new Error(
+          'Aborting SonarQube pagination after 200 pages (unexpectedly large response).',
+        );
       }
     }
   }
@@ -167,17 +141,39 @@ function renderMarkdown({ hostUrl, projectKey, measures, issues, maxList }) {
   lines.push('');
   lines.push(`- Security rating: ${securityRating ?? measures?.security_rating ?? 'n/a'}`);
   lines.push(`- Reliability rating: ${reliabilityRating ?? measures?.reliability_rating ?? 'n/a'}`);
-  lines.push(`- Maintainability rating: ${maintainabilityRating ?? measures?.sqale_rating ?? 'n/a'}`);
-  lines.push(`- Coverage: ${measures?.coverage ?? 'n/a'}% (lines to cover: ${measures?.lines_to_cover ?? 'n/a'})`);
-  lines.push(`- Duplications: ${measures?.duplicated_lines_density ?? 'n/a'}% (duplicated lines: ${measures?.duplicated_lines ?? 'n/a'})`);
-  lines.push(`- Open issues: vulnerabilities=${measures?.vulnerabilities ?? 'n/a'}, bugs=${measures?.bugs ?? 'n/a'}, code_smells=${measures?.code_smells ?? 'n/a'}`);
+  lines.push(
+    `- Maintainability rating: ${maintainabilityRating ?? measures?.sqale_rating ?? 'n/a'}`,
+  );
+  lines.push(
+    `- Coverage: ${measures?.coverage ?? 'n/a'}% (lines to cover: ${measures?.lines_to_cover ?? 'n/a'})`,
+  );
+  lines.push(
+    `- Duplications: ${measures?.duplicated_lines_density ?? 'n/a'}% (duplicated lines: ${measures?.duplicated_lines ?? 'n/a'})`,
+  );
+  lines.push(
+    `- Open issues: vulnerabilities=${measures?.vulnerabilities ?? 'n/a'}, bugs=${measures?.bugs ?? 'n/a'}, code_smells=${measures?.code_smells ?? 'n/a'}`,
+  );
   lines.push('');
 
   lines.push('## Issue Totals (pulled)');
   lines.push('');
   lines.push(`- Total: ${summary.total}`);
-  lines.push(`- By type: ${formatSummaryEntries(Object.entries(summary.byType))}`);
-  lines.push(`- By severity: ${formatSummaryEntries(Object.entries(summary.bySeverity))}`);
+  lines.push(
+    `- By type: ${
+      Object.entries(summary.byType)
+        .sort((a, b) => b[1] - a[1])
+        .map(([k, v]) => `${k}=${v}`)
+        .join(', ') || 'n/a'
+    }`,
+  );
+  lines.push(
+    `- By severity: ${
+      Object.entries(summary.bySeverity)
+        .sort((a, b) => b[1] - a[1])
+        .map(([k, v]) => `${k}=${v}`)
+        .join(', ') || 'n/a'
+    }`,
+  );
   lines.push('');
 
   lines.push('## Top Issues (for backlog)');
@@ -185,9 +181,20 @@ function renderMarkdown({ hostUrl, projectKey, measures, issues, maxList }) {
   lines.push(`(Showing up to ${maxList} issues, sorted by severity.)`);
   lines.push('');
 
-  const selected = sortIssues(issues).slice(0, maxList);
+  const sorted = [...issues].sort((a, b) => {
+    const r = severityRank(a.severity) - severityRank(b.severity);
+    if (r !== 0) return r;
+    return String(a.component || '').localeCompare(String(b.component || ''));
+  });
+
+  const selected = sorted.slice(0, maxList);
   for (const issue of selected) {
-    lines.push(renderIssueLine({ hostUrl, projectKey, issue }));
+    const file = stripComponentPrefix(issue.component);
+    const line = issue.line ? `:${issue.line}` : '';
+    const link = `${hostUrl}/project/issues?id=${encodeURIComponent(projectKey)}&open=${encodeURIComponent(issue.key)}`;
+    lines.push(
+      `- [${issue.type}/${issue.severity}] \`${file}${line}\` — ${issue.message} (rule: \`${issue.rule}\`) (${link})`,
+    );
   }
 
   lines.push('');
@@ -201,7 +208,8 @@ function renderMarkdown({ hostUrl, projectKey, measures, issues, maxList }) {
 
 function printHelp() {
   // Keep this short; the README/doc is the canonical reference.
-  console.log(`
+  console.log(
+    `
 Usage:
   node scripts/quality/sonarqube-export.cjs --host-url <url> --token <token> [--project-key dorfgefluester]
 
@@ -215,7 +223,8 @@ Env vars (alternatives):
 Optional:
   --types VULNERABILITY,BUG,CODE_SMELL
   --max-list 200
-`.trim());
+`.trim(),
+  );
 }
 
 async function main() {
@@ -252,7 +261,7 @@ async function main() {
     fetchMeasures({ hostUrl, token, projectKey }).catch((err) => {
       return { error: err.message };
     }),
-    fetchAllIssues({ hostUrl, token, projectKey, types })
+    fetchAllIssues({ hostUrl, token, projectKey, types }),
   ]);
 
   const payload = {
@@ -262,7 +271,7 @@ async function main() {
     types,
     measures,
     summary: summarizeIssues(issues),
-    issues
+    issues,
   };
 
   writeJson(outJson, payload);
