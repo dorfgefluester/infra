@@ -469,6 +469,7 @@ pipeline {
                                               --exclude='./.git' \
                                               --exclude='./.scannerwork' \
                                               --exclude='./playwright-report' \
+                                              --exclude='./tests/jenkins' \
                                               --exclude='./tests/test-results' \
                                               --exclude='./reports' \
                                               -cf - . | tar -C "$TMPDIR/repo" -xf -
