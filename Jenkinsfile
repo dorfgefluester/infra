@@ -466,6 +466,8 @@ pipeline {
 
                                             mkdir -p "$TMPDIR/repo" "$WORKSPACE/reports/gitleaks"
                                             tar \
+                                              --exclude='./.git' \
+                                              --exclude='./.scannerwork' \
                                               --exclude='./playwright-report' \
                                               --exclude='./tests/test-results' \
                                               --exclude='./reports' \

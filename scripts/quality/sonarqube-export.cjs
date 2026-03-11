@@ -67,43 +67,65 @@ async function fetchMeasures({ hostUrl, token, projectKey }) {
   return measures;
 }
 
+function buildIssuesSearchUrl({ hostUrl, projectKey, type, page }) {
+  const url = new URL(`${hostUrl}/api/issues/search`);
+  url.searchParams.set('componentKeys', projectKey);
+  url.searchParams.set('resolved', 'false');
+  url.searchParams.set('types', type);
+  url.searchParams.set('ps', String(PAGE_SIZE));
+  url.searchParams.set('p', String(page));
+  return url.toString();
+}
+
+async function fetchIssuesPage({ hostUrl, token, projectKey, type, page }) {
+  const url = buildIssuesSearchUrl({ hostUrl, projectKey, type, page });
+  const data = await fetchJson(url, { token });
+  const issues = Array.isArray(data?.issues) ? data.issues : [];
+
+  return {
+    total: Number(data?.total ?? 0),
+    issues,
+  };
+}
+
+async function fetchIssuesForType({ hostUrl, token, projectKey, type }) {
+  const issues = [];
+  let page = 1;
+  let total = null;
+
+  while (total === null || issues.length < total) {
+    const { total: pageTotal, issues: pageIssues } = await fetchIssuesPage({
+      hostUrl,
+      token,
+      projectKey,
+      type,
+      page,
+    });
+
+    if (total === null) {
+      total = pageTotal;
+    }
+    if (pageIssues.length === 0) {
+      break;
+    }
+
+    issues.push(...pageIssues);
+    page++;
+    if (page > 200) {
+      throw new Error(
+        'Aborting SonarQube pagination after 200 pages (unexpectedly large response).',
+      );
+    }
+  }
+
+  return issues;
+}
+
 async function fetchAllIssues({ hostUrl, token, projectKey, types }) {
   const issues = [];
 
   for (const type of types) {
-    let page = 1;
-    let total = null;
-    let fetchedForType = 0;
-
-    while (total === null || fetchedForType < total) {
-      const url = new URL(`${hostUrl}/api/issues/search`);
-      url.searchParams.set('componentKeys', projectKey);
-      url.searchParams.set('resolved', 'false');
-      url.searchParams.set('types', type);
-      url.searchParams.set('ps', String(PAGE_SIZE));
-      url.searchParams.set('p', String(page));
-
-      const data = await fetchJson(url.toString(), { token });
-
-      if (total === null) {
-        total = Number(data?.total ?? 0);
-      }
-
-      const pageIssues = Array.isArray(data?.issues) ? data.issues : [];
-      if (pageIssues.length === 0) break;
-
-      for (const issue of pageIssues) {
-        issues.push(issue);
-      }
-
-      fetchedForType += pageIssues.length;
-      page++;
-      if (page > 200) {
-        throw new Error(
-          'Aborting SonarQube pagination after 200 pages (unexpectedly large response).',
-        );
-      }
-    }
+    issues.push(...(await fetchIssuesForType({ hostUrl, token, projectKey, type })));
   }
 
   return issues;

@@ -47,28 +47,31 @@ function shellSplit(raw) {
   let current = '';
   let quote = null;
   for (let i = 0; i < raw.length; i++) {
-    const ch = raw[i];
-    if (quote) {
-      if (ch === quote) {
-        quote = null;
-      } else {
-        current += ch;
-      }
-      continue;
-    }
-    if (ch === '"' || ch === "'") {
-      quote = ch;
-      continue;
-    }
-    if (/\s/.test(ch)) {
-      if (current) tokens.push(current);
-      current = '';
-      continue;
-    }
-    current += ch;
+    ({ current, quote } = consumeShellTokenChar(raw[i], current, quote, tokens));
   }
-  if (current) tokens.push(current);
+  pushToken(tokens, current);
   return tokens;
+}
+
+function pushToken(tokens, current) {
+  if (current) tokens.push(current);
+}
+
+function consumeShellTokenChar(ch, current, quote, tokens) {
+  if (quote) {
+    return {
+      current: ch === quote ? current : current + ch,
+      quote: ch === quote ? null : quote,
+    };
+  }
+  if (ch === '"' || ch === "'") {
+    return { current, quote: ch };
+  }
+  if (/\s/.test(ch)) {
+    pushToken(tokens, current);
+    return { current: '', quote };
+  }
+  return { current: current + ch, quote };
 }
 
 function runNode(scriptPath, scriptArgs) {
@@ -88,6 +91,38 @@ function shouldRunTrivy() {
   return commandExists('docker') || commandExists('podman') || commandExists('trivy');
 }
 
+function handleSkippedTool({ shouldRun, strict, message, exitCode }) {
+  if (shouldRun) {
+    return exitCode;
+  }
+  if (strict) {
+    console.error(message);
+    return 1;
+  }
+  console.warn(message);
+  return exitCode;
+}
+
+function runOptionalNodeScript({
+  enabled,
+  shouldRun,
+  strict,
+  message,
+  scriptPath,
+  scriptArgs,
+  exitCode,
+}) {
+  if (!enabled) {
+    return exitCode;
+  }
+  if (!shouldRun) {
+    return handleSkippedTool({ shouldRun, strict, message, exitCode });
+  }
+
+  const code = runNode(scriptPath, scriptArgs);
+  return code !== 0 ? code : exitCode;
+}
+
 function main() {
   const { args } = parseArgs(process.argv.slice(2));
   if (args.help || args.h) {
@@ -103,37 +138,25 @@ function main() {
   const trivyArgs = shellSplit(args['trivy-args']);
 
   let exitCode = 0;
-
-  if (runSonar) {
-    if (!shouldRunSonar(sonarArgs)) {
-      const msg =
-        'Skipping SonarQube export: missing SONAR_HOST_URL/SONAR_TOKEN (or --host-url/--token via --sonar-args).';
-      if (strict) {
-        console.error(msg);
-        exitCode = 1;
-      } else {
-        console.warn(msg);
-      }
-    } else {
-      const code = runNode('scripts/quality/sonarqube-export.cjs', sonarArgs);
-      if (code !== 0) exitCode = code;
-    }
-  }
-
-  if (runTrivy) {
-    if (!shouldRunTrivy()) {
-      const msg = 'Skipping Trivy FS scan: install docker, podman, or trivy binary.';
-      if (strict) {
-        console.error(msg);
-        exitCode = 1;
-      } else {
-        console.warn(msg);
-      }
-    } else {
-      const code = runNode('scripts/quality/trivy-fs-scan.cjs', trivyArgs);
-      if (code !== 0) exitCode = code;
-    }
-  }
+  exitCode = runOptionalNodeScript({
+    enabled: runSonar,
+    shouldRun: shouldRunSonar(sonarArgs),
+    strict,
+    message:
+      'Skipping SonarQube export: missing SONAR_HOST_URL/SONAR_TOKEN (or --host-url/--token via --sonar-args).',
+    scriptPath: 'scripts/quality/sonarqube-export.cjs',
+    scriptArgs: sonarArgs,
+    exitCode,
+  });
+  exitCode = runOptionalNodeScript({
+    enabled: runTrivy,
+    shouldRun: shouldRunTrivy(),
+    strict,
+    message: 'Skipping Trivy FS scan: install docker, podman, or trivy binary.',
+    scriptPath: 'scripts/quality/trivy-fs-scan.cjs',
+    scriptArgs: trivyArgs,
+    exitCode,
+  });
 
   process.exitCode = exitCode;
 }
