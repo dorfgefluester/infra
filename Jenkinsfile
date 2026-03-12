@@ -432,11 +432,22 @@ pipeline {
                                 },
                                 // Run Semgrep SAST ruleset for fast pattern-based vulnerability detection.
                                 'Semgrep': {
-                                    sh '''
-                                        docker run --rm -u "$(id -u):$(id -g)" -v "$WORKSPACE:/src" \
-                                          returntocorp/semgrep semgrep scan /src \
-                                          --config auto --error || true
-                                    '''
+                                    catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                                        retry(2) {
+                                            def semgrepStatus = sh(
+                                                script: '''
+                                                    docker run --rm -u "$(id -u):$(id -g)" -v "$WORKSPACE:/src" \
+                                                      returntocorp/semgrep semgrep scan /src \
+                                                      --config auto --error
+                                                ''',
+                                                returnStatus: true
+                                            )
+
+                                            if (semgrepStatus != 0) {
+                                                unstable("Semgrep reported findings or returned exit code ${semgrepStatus}.")
+                                            }
+                                        }
+                                    }
                                 },
 	                                // Run npm audit as a dependency-risk signal while keeping delivery non-blocking.
 	                                'npm Audit': {
