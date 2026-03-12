@@ -113,9 +113,9 @@ function summarizeTrivy(json) {
   const packagesList = Array.from(packages.values())
     .map((pkg) => ({
       ...pkg,
-      fixedVersions: Array.from(pkg.fixedVersions).sort(),
+      fixedVersions: Array.from(pkg.fixedVersions).sort((a, b) => a.localeCompare(b)),
       vulnerabilityCount: pkg.vulnerabilities.length,
-      vulnerabilities: pkg.vulnerabilities.sort(),
+      vulnerabilities: pkg.vulnerabilities.sort((a, b) => a.localeCompare(b)),
     }))
     .sort((a, b) => {
       if (b.critical !== a.critical) return b.critical - a.critical;
