@@ -45,8 +45,104 @@ function runDirectTrivy({ scanPath, outJson, severity, ignoreUnfixed, skipDirs }
   }
 }
 
+const SEVERITY_ORDER = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'UNKNOWN'];
+
+function listResults(json) {
+  return Array.isArray(json?.Results) ? json.Results : [];
+}
+
+function listVulnerabilities(result) {
+  return Array.isArray(result?.Vulnerabilities) ? result.Vulnerabilities : [];
+}
+
+function incrementSeverity(bySeverity, severity) {
+  bySeverity[severity] = (bySeverity[severity] || 0) + 1;
+}
+
+function updateTargetSummary(targets, targetName, type, severity) {
+  const current = targets.get(targetName) || {
+    target: targetName,
+    type,
+    count: 0,
+    critical: 0,
+    high: 0,
+  };
+
+  current.count += 1;
+  current.critical += severity === 'CRITICAL' ? 1 : 0;
+  current.high += severity === 'HIGH' ? 1 : 0;
+  targets.set(targetName, current);
+}
+
+function getOrCreatePackageSummary(packages, packageKey, packageName, ecosystem, installedVersion) {
+  return (
+    packages.get(packageKey) || {
+      packageName,
+      ecosystem,
+      installedVersion,
+      fixedVersions: new Set(),
+      vulnerabilities: [],
+      critical: 0,
+      high: 0,
+    }
+  );
+}
+
+function updatePackageSummary(packageSummary, vulnerabilityId, fixedVersion, severity) {
+  if (fixedVersion) {
+    packageSummary.fixedVersions.add(fixedVersion);
+  }
+
+  packageSummary.vulnerabilities.push(vulnerabilityId);
+  packageSummary.critical += severity === 'CRITICAL' ? 1 : 0;
+  packageSummary.high += severity === 'HIGH' ? 1 : 0;
+}
+
+function createTopFinding(vulnerability, severity, fixedVersion, targetName) {
+  return {
+    severity,
+    pkg: vulnerability.PkgName,
+    installed: vulnerability.InstalledVersion,
+    fixed: fixedVersion,
+    title: vulnerability.Title || vulnerability.VulnerabilityID,
+    id: vulnerability.VulnerabilityID,
+    target: targetName,
+  };
+}
+
+function sortBySeverity(a, b) {
+  return SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity);
+}
+
+function sortPackages(a, b) {
+  if (b.critical !== a.critical) return b.critical - a.critical;
+  if (b.high !== a.high) return b.high - a.high;
+  return b.vulnerabilityCount - a.vulnerabilityCount;
+}
+
+function sortTargets(a, b) {
+  if (b.critical !== a.critical) return b.critical - a.critical;
+  if (b.high !== a.high) return b.high - a.high;
+  return b.count - a.count;
+}
+
+function buildPackagesList(packages) {
+  return Array.from(packages.values())
+    .map((pkg) => ({
+      ...pkg,
+      fixedVersions: Array.from(pkg.fixedVersions).sort((a, b) => a.localeCompare(b)),
+      vulnerabilityCount: pkg.vulnerabilities.length,
+      vulnerabilities: pkg.vulnerabilities.sort((a, b) => a.localeCompare(b)),
+    }))
+    .sort(sortPackages);
+}
+
+function buildTargetList(targets) {
+  return Array.from(targets.values()).sort(sortTargets);
+}
+
 function summarizeTrivy(json) {
-  const results = Array.isArray(json?.Results) ? json.Results : [];
+  const results = listResults(json);
 
   let vulnCount = 0;
   const bySeverity = {};
@@ -57,77 +153,39 @@ function summarizeTrivy(json) {
 
   for (const result of results) {
     const targetName = result.Target || 'unknown';
-    const vulnerabilities = Array.isArray(result?.Vulnerabilities) ? result.Vulnerabilities : [];
+    const targetType = result.Type || 'unknown';
+    const vulnerabilities = listVulnerabilities(result);
     for (const v of vulnerabilities) {
       vulnCount++;
       const sev = String(v.Severity || 'UNKNOWN');
-      bySeverity[sev] = (bySeverity[sev] || 0) + 1;
+      incrementSeverity(bySeverity, sev);
       const fixedVersion = v.FixedVersion || '';
-      const packageKey = `${v.PkgName || 'unknown'}@${result.Type || 'unknown'}`;
+      const packageName = v.PkgName || 'unknown';
+      const packageKey = `${packageName}@${targetType}`;
 
       if (fixedVersion) {
         fixableCount++;
       }
 
-      targets.set(targetName, {
-        target: targetName,
-        type: result.Type || 'unknown',
-        count: (targets.get(targetName)?.count || 0) + 1,
-        critical: (targets.get(targetName)?.critical || 0) + (sev === 'CRITICAL' ? 1 : 0),
-        high: (targets.get(targetName)?.high || 0) + (sev === 'HIGH' ? 1 : 0),
-      });
+      updateTargetSummary(targets, targetName, targetType, sev);
 
-      const existingPackage = packages.get(packageKey) || {
-        packageName: v.PkgName || 'unknown',
-        ecosystem: result.Type || 'unknown',
-        installedVersion: v.InstalledVersion || '',
-        fixedVersions: new Set(),
-        vulnerabilities: [],
-        critical: 0,
-        high: 0,
-      };
+      const packageSummary = getOrCreatePackageSummary(
+        packages,
+        packageKey,
+        packageName,
+        targetType,
+        v.InstalledVersion || '',
+      );
+      updatePackageSummary(packageSummary, v.VulnerabilityID, fixedVersion, sev);
+      packages.set(packageKey, packageSummary);
 
-      if (fixedVersion) {
-        existingPackage.fixedVersions.add(fixedVersion);
-      }
-      existingPackage.vulnerabilities.push(v.VulnerabilityID);
-      existingPackage.critical += sev === 'CRITICAL' ? 1 : 0;
-      existingPackage.high += sev === 'HIGH' ? 1 : 0;
-      packages.set(packageKey, existingPackage);
-
-      topItems.push({
-        severity: sev,
-        pkg: v.PkgName,
-        installed: v.InstalledVersion,
-        fixed: fixedVersion,
-        title: v.Title || v.VulnerabilityID,
-        id: v.VulnerabilityID,
-        target: targetName,
-      });
+      topItems.push(createTopFinding(v, sev, fixedVersion, targetName));
     }
   }
 
-  const severityOrder = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'UNKNOWN'];
-  topItems.sort((a, b) => severityOrder.indexOf(a.severity) - severityOrder.indexOf(b.severity));
-
-  const packagesList = Array.from(packages.values())
-    .map((pkg) => ({
-      ...pkg,
-      fixedVersions: Array.from(pkg.fixedVersions).sort((a, b) => a.localeCompare(b)),
-      vulnerabilityCount: pkg.vulnerabilities.length,
-      vulnerabilities: pkg.vulnerabilities.sort((a, b) => a.localeCompare(b)),
-    }))
-    .sort((a, b) => {
-      if (b.critical !== a.critical) return b.critical - a.critical;
-      if (b.high !== a.high) return b.high - a.high;
-      return b.vulnerabilityCount - a.vulnerabilityCount;
-    });
-
-  const targetList = Array.from(targets.values()).sort((a, b) => {
-    if (b.critical !== a.critical) return b.critical - a.critical;
-    if (b.high !== a.high) return b.high - a.high;
-    return b.count - a.count;
-  });
+  topItems.sort(sortBySeverity);
+  const packagesList = buildPackagesList(packages);
+  const targetList = buildTargetList(targets);
 
   return {
     generatedAt: new Date().toISOString(),
@@ -242,6 +300,121 @@ function parseBoolean(value, defaultValue) {
   return defaultValue;
 }
 
+function resolveRuntime(requestedRuntime) {
+  const runtime =
+    requestedRuntime && requestedRuntime !== 'trivy' ? requestedRuntime : pickContainerRuntime();
+  const hasNativeTrivy = commandExists('trivy');
+
+  if (!runtime && !hasNativeTrivy) {
+    throw new Error(
+      'No Trivy runtime found. Install docker/podman or trivy binary to generate FS findings.',
+    );
+  }
+
+  if (runtime && !['docker', 'podman'].includes(runtime)) {
+    throw new Error(`Unsupported --runtime value: ${runtime}. Use docker, podman, or trivy.`);
+  }
+
+  return { runtime, hasNativeTrivy };
+}
+
+function writeFindingsArtifacts({ outJson, outSummary, outMd, maxList }) {
+  const json = readJson(outJson);
+  const summary = summarizeTrivy(json);
+
+  writeText(outSummary, JSON.stringify(summary, null, 2));
+  writeText(outMd, renderTrivyMarkdown({ summary, maxList }));
+
+  console.log(`Wrote Trivy findings JSON: ${outJson}`);
+  console.log(`Wrote Trivy findings summary: ${outSummary}`);
+  console.log(`Wrote Trivy findings markdown: ${outMd}`);
+}
+
+function buildContainerTrivyArgs({
+  runtime,
+  absScanPath,
+  cacheDirAbs,
+  containerScanPath,
+  containerCacheDir,
+  containerOutPath,
+  severity,
+  ignoreUnfixed,
+  skipDirs,
+}) {
+  const uid = typeof process.getuid === 'function' ? String(process.getuid()) : '1000';
+  const gid = typeof process.getgid === 'function' ? String(process.getgid()) : '1000';
+  const skipDirsContainer = skipDirs
+    .map((dir) => `${containerScanPath}/${dir}`.replace(/\/+$/, ''))
+    .join(',');
+  const containerArgs = ['run', '--rm'];
+
+  if (runtime === 'podman') {
+    containerArgs.push('--userns=keep-id');
+  } else {
+    containerArgs.push('-u', `${uid}:${gid}`);
+  }
+
+  containerArgs.push(
+    '-v',
+    `${absScanPath}:${containerScanPath}`,
+    '-v',
+    `${cacheDirAbs}:${containerCacheDir}`,
+    'docker.io/aquasec/trivy:latest',
+    'fs',
+    containerScanPath,
+    '--cache-dir',
+    containerCacheDir,
+    '--format',
+    'json',
+    '--output',
+    containerOutPath,
+    '--severity',
+    severity,
+    '--no-progress',
+    '--exit-code',
+    '0',
+  );
+
+  if (ignoreUnfixed) {
+    containerArgs.push('--ignore-unfixed');
+  }
+
+  if (skipDirsContainer) {
+    containerArgs.push('--skip-dirs', skipDirsContainer);
+  }
+
+  return containerArgs;
+}
+
+function runContainerTrivy({ runtime, scanPath, outJson, severity, ignoreUnfixed, skipDirs }) {
+  const cwd = process.cwd();
+  const absScanPath = path.resolve(cwd, scanPath);
+  const outJsonAbs = path.resolve(cwd, outJson);
+  const cacheDir = path.join(cwd, 'reports', 'trivy', 'cache');
+  const cacheDirAbs = path.resolve(cacheDir);
+  const containerScanPath = '/src';
+  const containerCacheDir = '/tmp/trivy-cache';
+  const containerOutPath = `/src/${path.relative(cwd, outJsonAbs).replaceAll(path.sep, '/')}`;
+  const containerArgs = buildContainerTrivyArgs({
+    runtime,
+    absScanPath,
+    cacheDirAbs,
+    containerScanPath,
+    containerCacheDir,
+    containerOutPath,
+    severity,
+    ignoreUnfixed,
+    skipDirs,
+  });
+
+  ensureDirForFile(path.join(cacheDir, '.keep'));
+
+  const res = spawnSync(runtime, containerArgs, { stdio: 'inherit' });
+  if (res.status !== 0) {
+    throw new Error(`Trivy scan failed with exit code ${res.status}`);
+  }
+}
+
 function main() {
   const { args } = parseArgs(process.argv.slice(2));
 
@@ -265,107 +438,21 @@ function main() {
     .filter(Boolean);
 
   const maxList = Number(args['max-list'] || 200);
-
   const requestedRuntime = args.runtime ? String(args.runtime).trim().toLowerCase() : '';
-  const runtime =
-    requestedRuntime && requestedRuntime !== 'trivy' ? requestedRuntime : pickContainerRuntime();
-  const hasNativeTrivy = commandExists('trivy');
-  if (!runtime && !hasNativeTrivy) {
-    throw new Error(
-      'No Trivy runtime found. Install docker/podman or trivy binary to generate FS findings.',
-    );
-  }
-
-  if (runtime && !['docker', 'podman'].includes(runtime)) {
-    throw new Error(`Unsupported --runtime value: ${runtime}. Use docker, podman, or trivy.`);
-  }
+  const { runtime, hasNativeTrivy } = resolveRuntime(requestedRuntime);
 
   ensureDirForFile(outJson);
   ensureDirForFile(outSummary);
-
-  const cwd = process.cwd();
+  ensureDirForFile(outMd);
 
   if ((!runtime || requestedRuntime === 'trivy') && hasNativeTrivy) {
     runDirectTrivy({ scanPath, outJson, severity, ignoreUnfixed, skipDirs });
-    const json = readJson(outJson);
-    const summary = summarizeTrivy(json);
-    writeText(outSummary, JSON.stringify(summary, null, 2));
-    writeText(outMd, renderTrivyMarkdown({ summary, maxList }));
-
-    console.log(`Wrote Trivy findings JSON: ${outJson}`);
-    console.log(`Wrote Trivy findings summary: ${outSummary}`);
-    console.log(`Wrote Trivy findings markdown: ${outMd}`);
+    writeFindingsArtifacts({ outJson, outSummary, outMd, maxList });
     return;
   }
 
-  const absScanPath = path.resolve(cwd, scanPath);
-  const outJsonAbs = path.resolve(cwd, outJson);
-
-  const containerScanPath = '/src';
-  const containerOutPath = `/src/${path.relative(cwd, outJsonAbs).replaceAll(path.sep, '/')}`;
-
-  const uid = typeof process.getuid === 'function' ? String(process.getuid()) : '1000';
-  const gid = typeof process.getgid === 'function' ? String(process.getgid()) : '1000';
-
-  const cacheDir = path.join(cwd, 'reports', 'trivy', 'cache');
-  const cacheDirAbs = path.resolve(cacheDir);
-  const containerCacheDir = '/tmp/trivy-cache';
-  ensureDirForFile(path.join(cacheDir, '.keep'));
-
-  const skipDirsContainer = skipDirs
-    .map((dir) => `${containerScanPath}/${dir}`.replace(/\/+$/, ''))
-    .join(',');
-
-  const baseArgs = ['run', '--rm'];
-
-  if (runtime === 'podman') {
-    baseArgs.push('--userns=keep-id');
-  } else {
-    baseArgs.push('-u', `${uid}:${gid}`);
-  }
-
-  baseArgs.push(
-    '-v',
-    `${absScanPath}:${containerScanPath}`,
-    '-v',
-    `${cacheDirAbs}:${containerCacheDir}`,
-    'docker.io/aquasec/trivy:latest',
-    'fs',
-    containerScanPath,
-    '--cache-dir',
-    containerCacheDir,
-    '--format',
-    'json',
-    '--output',
-    containerOutPath,
-    '--severity',
-    severity,
-    '--no-progress',
-    '--exit-code',
-    '0',
-  );
-
-  if (ignoreUnfixed) {
-    baseArgs.push('--ignore-unfixed');
-  }
-
-  if (skipDirsContainer) {
-    baseArgs.push('--skip-dirs', skipDirsContainer);
-  }
-
-  const res = spawnSync(runtime, baseArgs, { stdio: 'inherit' });
-  if (res.status !== 0) {
-    throw new Error(`Trivy scan failed with exit code ${res.status}`);
-  }
-
-  const json = readJson(outJson);
-  const summary = summarizeTrivy(json);
-  writeText(outSummary, JSON.stringify(summary, null, 2));
-  writeText(outMd, renderTrivyMarkdown({ summary, maxList }));
-
-  console.log(`Wrote Trivy findings JSON: ${outJson}`);
-  console.log(`Wrote Trivy findings summary: ${outSummary}`);
-  console.log(`Wrote Trivy findings markdown: ${outMd}`);
+  runContainerTrivy({ runtime, scanPath, outJson, severity, ignoreUnfixed, skipDirs });
+  writeFindingsArtifacts({ outJson, outSummary, outMd, maxList });
 }
 
 try {
