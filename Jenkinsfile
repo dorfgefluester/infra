@@ -704,15 +704,19 @@ pipeline {
                                 mkdir -p '${buildxCacheDir}'
                                 if docker buildx version >/dev/null 2>&1; then
                                   export DOCKER_BUILDKIT=1
-                                  rm -rf '${buildxCacheDir}-new'
-                                  docker buildx build \
+                                  if docker buildx inspect >/dev/null 2>&1 && docker buildx build \
                                     --load \
                                     --tag ${IMAGE_REPO}:${resolvedTag} \
                                     --cache-from type=local,src='${buildxCacheDir}' \
                                     --cache-to type=local,dest='${buildxCacheDir}-new',mode=max \
-                                    .
-                                  rm -rf '${buildxCacheDir}'
-                                  mv '${buildxCacheDir}-new' '${buildxCacheDir}'
+                                    .; then
+                                    rm -rf '${buildxCacheDir}'
+                                    mv '${buildxCacheDir}-new' '${buildxCacheDir}'
+                                  else
+                                    rm -rf '${buildxCacheDir}-new'
+                                    echo 'docker buildx cache export unsupported on this agent; falling back to uncached docker build.'
+                                    docker build -t ${IMAGE_REPO}:${resolvedTag} .
+                                  fi
                                 else
                                   echo 'docker buildx unavailable on agent; falling back to classic docker build.'
                                   docker build -t ${IMAGE_REPO}:${resolvedTag} .
