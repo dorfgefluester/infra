@@ -455,9 +455,18 @@ function main() {
   writeFindingsArtifacts({ outJson, outSummary, outMd, maxList });
 }
 
-try {
-  main();
-} catch (err) {
-  console.error(err?.stack || err?.message || String(err));
-  process.exitCode = 1;
+module.exports = {
+  buildContainerTrivyArgs,
+  parseBoolean,
+  renderTrivyMarkdown,
+  summarizeTrivy,
+};
+
+if (require.main === module) {
+  try {
+    main();
+  } catch (err) {
+    console.error(err?.stack || err?.message || String(err));
+    process.exitCode = 1;
+  }
 }

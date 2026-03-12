@@ -705,37 +705,42 @@ pipeline {
                             }
                             if (isUnset(resolvedTag)) {
                                 error('Unable to resolve IMAGE_TAG from GIT_COMMIT or git rev-parse.')
-                            }
-                            env.GIT_SHA = resolvedTag
-                            env.IMAGE_TAG = resolvedTag
-                            echo "Using image tag ${resolvedTag}."
-                            def buildxCacheDir = "${env.DOCKER_BUILDX_CACHE_DIR}"
-                            sh """
-                                set -eu
-                                mkdir -p '${buildxCacheDir}'
-                                if docker buildx version >/dev/null 2>&1; then
-                                  export DOCKER_BUILDKIT=1
-                                  if docker buildx inspect >/dev/null 2>&1 && docker buildx build \
-                                    --load \
-                                    --tag ${IMAGE_REPO}:${resolvedTag} \
-                                    --cache-from type=local,src='${buildxCacheDir}' \
-                                    --cache-to type=local,dest='${buildxCacheDir}-new',mode=max \
-                                    .; then
-                                    rm -rf '${buildxCacheDir}'
-                                    mv '${buildxCacheDir}-new' '${buildxCacheDir}'
-                                  else
-                                    rm -rf '${buildxCacheDir}-new'
-                                    echo 'docker buildx cache export unsupported on this agent; falling back to uncached docker build.'
-                                    docker build -t ${IMAGE_REPO}:${resolvedTag} .
-                                  fi
-                                else
-                                  echo 'docker buildx unavailable on agent; falling back to classic docker build.'
-                                  docker build -t ${IMAGE_REPO}:${resolvedTag} .
-                                fi
-                            """
-                        }
-                    }
-                }
+            }
+            env.GIT_SHA = resolvedTag
+            env.IMAGE_TAG = resolvedTag
+            echo "Using image tag ${resolvedTag}."
+            def deploymentEnvironment = env.BRANCH_NAME == 'master'
+                ? 'staging'
+                : ((env.BRANCH_NAME ?: 'development').trim())
+            echo "Using deployment environment ${deploymentEnvironment} for frontend telemetry."
+            def buildxCacheDir = "${env.DOCKER_BUILDX_CACHE_DIR}"
+            sh """
+                set -eu
+                mkdir -p '${buildxCacheDir}'
+                if docker buildx version >/dev/null 2>&1; then
+                  export DOCKER_BUILDKIT=1
+                  if docker buildx inspect >/dev/null 2>&1 && docker buildx build \
+                    --load \
+                    --tag ${IMAGE_REPO}:${resolvedTag} \
+                    --build-arg VITE_DEPLOYMENT_ENVIRONMENT=${deploymentEnvironment} \
+                    --cache-from type=local,src='${buildxCacheDir}' \
+                    --cache-to type=local,dest='${buildxCacheDir}-new',mode=max \
+                    .; then
+                    rm -rf '${buildxCacheDir}'
+                    mv '${buildxCacheDir}-new' '${buildxCacheDir}'
+                  else
+                    rm -rf '${buildxCacheDir}-new'
+                    echo 'docker buildx cache export unsupported on this agent; falling back to uncached docker build.'
+                    docker build --build-arg VITE_DEPLOYMENT_ENVIRONMENT=${deploymentEnvironment} -t ${IMAGE_REPO}:${resolvedTag} .
+                  fi
+                else
+                  echo 'docker buildx unavailable on agent; falling back to classic docker build.'
+                  docker build --build-arg VITE_DEPLOYMENT_ENVIRONMENT=${deploymentEnvironment} -t ${IMAGE_REPO}:${resolvedTag} .
+                fi
+            """
+        }
+    }
+}
 
                 // Scan the built image for high/critical vulnerabilities before publishing.
                 stage('Scan Docker Image') {
