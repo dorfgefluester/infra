@@ -376,175 +376,175 @@ pipeline {
             when {
                 expression { return env.BUILD_ALLOWED == 'true' }
             }
-            parallel {
-                // Run code-quality analysis and security checks in parallel for faster feedback.
-                stage('Analysis & Security') {
-                    parallel {
-                        // Send source and coverage data to SonarQube for centralized quality metrics.
-                        stage('SonarQube Analysis') {
-                            steps {
-                                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                                    withSonarQubeEnv('SonarQube') {
-                                        withEnv([
-                                            "SONAR_SCANNER_DEBUG=${params.SONAR_VERBOSE ? '-X' : ''}",
                                             "SONAR_SCANNER_VERBOSE=${params.SONAR_VERBOSE ? '-Dsonar.verbose=true' : ''}"
-                                        ]) {
-                                            sh '''
-                                                docker run --rm \
-                                                  -u "$(id -u):$(id -g)" \
-                                                  -e SONAR_HOST_URL="$SONAR_HOST_URL" \
-                                                  -e SONAR_TOKEN="$SONAR_AUTH_TOKEN" \
-                                                  -v "$WORKSPACE:/usr/src" \
-                                                  sonarsource/sonar-scanner-cli:11 \
-                                                  sonar-scanner $SONAR_SCANNER_DEBUG $SONAR_SCANNER_VERBOSE \
-                                                    -Dsonar.projectKey=dorfgefluester \
-                                                    -Dsonar.projectName="Dorfgefluester" \
-                                                    -Dsonar.sources=. \
-                                                    -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/tests/**,**/coverage/**,**/assets/tilemaps/**/*.tsx \
-                                                    -Dsonar.javascript.lcov.reportPaths=tests/coverage/lcov.info \
-                                                    -Dsonar.scanner.metadataFilePath=/usr/src/report-task.txt \
-                                                    -Dsonar.host.url="$SONAR_HOST_URL"
-                                            '''
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // Execute independent security scans in parallel so one slow scan does not block others.
-                        stage('Security Scans') {
-                            steps {
-                                script {
-                                    parallel(
-                                        // Scan the repository filesystem for high/critical issues without failing the pipeline.
-                                        'Trivy FS Scan': {
-                                            sh '''
-                                                mkdir -p "$(dirname "$JOB_CACHE_TOUCH_FILE")"
-                                                touch "$JOB_CACHE_TOUCH_FILE"
-                                                mkdir -p reports/trivy
-                                                mkdir -p "$TRIVY_FS_CACHE_DIR"
-                                                docker run --rm -u "$(id -u):$(id -g)" \
-                                                  -v "$WORKSPACE:/src" \
-                                                  -v "$TRIVY_FS_CACHE_DIR:/tmp/trivy-cache" \
-                                                  aquasec/trivy fs /src \
-                                                  --cache-dir /tmp/trivy-cache \
-                                                  --format json --output /src/reports/trivy/fs.json \
-                                                  --exit-code 0 --severity HIGH,CRITICAL --ignore-unfixed || true
-                                            '''
-                                            sh 'node scripts/quality/trivy-summary.cjs --input reports/trivy/fs.json --label "Trivy FS Scan"'
-                                        },
-                                        // Run Semgrep SAST ruleset for fast pattern-based vulnerability detection.
-                                        'Semgrep': {
+            steps {
+                script {
+                    parallel(
+                        // Run code-quality analysis and security checks in parallel for faster feedback.
+                        'Analysis & Security': {
+                            stage('Analysis & Security') {
+                                parallel(
+                                    // Send source and coverage data to SonarQube for centralized quality metrics.
+                                    'SonarQube Analysis': {
+                                        stage('SonarQube Analysis') {
                                             catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                                                retry(2) {
-                                                    def semgrepStatus = sh(
-                                                        script: '''
-                                                            docker run --rm -u "$(id -u):$(id -g)" -v "$WORKSPACE:/src" \
-                                                              returntocorp/semgrep semgrep scan /src \
-                                                              --config auto --error
-                                                        ''',
-                                                        returnStatus: true
-                                                    )
-
-                                                    if (semgrepStatus != 0) {
-                                                        unstable("Semgrep reported findings or returned exit code ${semgrepStatus}.")
+                                                withSonarQubeEnv('SonarQube') {
+                                                    withEnv([
+                                                        "SONAR_SCANNER_DEBUG=${params.SONAR_VERBOSE ? '-X' : ''}",
+                                                        "SONAR_SCANNER_VERBOSE=${params.SONAR_VERBOSE ? '-Dsonar.verbose=true' : ''}"
+                                                    ]) {
+                                                        sh '''
+                                                            docker run --rm \
+                                                              -u "$(id -u):$(id -g)" \
+                                                              -e SONAR_HOST_URL="$SONAR_HOST_URL" \
+                                                              -e SONAR_TOKEN="$SONAR_AUTH_TOKEN" \
+                                                              -v "$WORKSPACE:/usr/src" \
+                                                              sonarsource/sonar-scanner-cli:11 \
+                                                              sonar-scanner $SONAR_SCANNER_DEBUG $SONAR_SCANNER_VERBOSE \
+                                                                -Dsonar.projectKey=dorfgefluester \
+                                                                -Dsonar.projectName="Dorfgefluester" \
+                                                                -Dsonar.sources=. \
+                                                                -Dsonar.exclusions=**/node_modules/**,**/dist/**,**/tests/**,**/coverage/**,**/assets/tilemaps/**/*.tsx \
+                                                                -Dsonar.javascript.lcov.reportPaths=tests/coverage/lcov.info \
+                                                                -Dsonar.scanner.metadataFilePath=/usr/src/report-task.txt \
+                                                                -Dsonar.host.url="$SONAR_HOST_URL"
+                                                        '''
                                                     }
                                                 }
                                             }
-                                        },
-                                        // Run npm audit as a dependency-risk signal while keeping delivery non-blocking.
-                                        'npm Audit': {
-                                            sh 'npm audit --audit-level=high --package-lock-only || true'
-                                        },
-                                        // Scan workspace files for leaked secrets while excluding generated artifacts.
-                                        'Gitleaks': {
-                                            sh 'mkdir -p reports/gitleaks'
-                                            def status = sh(
-                                                script: '''
-                                                    set -eu
-                                                    TMPDIR="$(mktemp -d)"
-                                                    cleanup() {
-                                                      rm -rf "$TMPDIR"
+                                        }
+                                    },
+                                    // Execute independent security scans in parallel so one slow scan does not block others.
+                                    'Security Scans': {
+                                        stage('Security Scans') {
+                                            parallel(
+                                                // Scan the repository filesystem for high/critical issues without failing the pipeline.
+                                                'Trivy FS Scan': {
+                                                    sh '''
+                                                        mkdir -p "$(dirname "$JOB_CACHE_TOUCH_FILE")"
+                                                        touch "$JOB_CACHE_TOUCH_FILE"
+                                                        mkdir -p reports/trivy
+                                                        mkdir -p "$TRIVY_FS_CACHE_DIR"
+                                                        docker run --rm -u "$(id -u):$(id -g)" \
+                                                          -v "$WORKSPACE:/src" \
+                                                          -v "$TRIVY_FS_CACHE_DIR:/tmp/trivy-cache" \
+                                                          aquasec/trivy fs /src \
+                                                          --cache-dir /tmp/trivy-cache \
+                                                          --format json --output /src/reports/trivy/fs.json \
+                                                          --exit-code 0 --severity HIGH,CRITICAL --ignore-unfixed || true
+                                                    '''
+                                                    sh 'node scripts/quality/trivy-summary.cjs --input reports/trivy/fs.json --label "Trivy FS Scan"'
+                                                },
+                                                // Run Semgrep SAST ruleset for fast pattern-based vulnerability detection.
+                                                'Semgrep': {
+                                                    catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                                                        retry(2) {
+                                                            def semgrepStatus = sh(
+                                                                script: '''
+                                                                    docker run --rm -u "$(id -u):$(id -g)" -v "$WORKSPACE:/src" \
+                                                                      returntocorp/semgrep semgrep scan /src \
+                                                                      --config auto --error
+                                                                ''',
+                                                                returnStatus: true
+                                                            )
+
+                                                            if (semgrepStatus != 0) {
+                                                                unstable("Semgrep reported findings or returned exit code ${semgrepStatus}.")
+                                                            }
+                                                        }
                                                     }
-                                                    trap cleanup EXIT
+                                                },
+                                                // Run npm audit as a dependency-risk signal while keeping delivery non-blocking.
+                                                'npm Audit': {
+                                                    sh 'npm audit --audit-level=high --package-lock-only || true'
+                                                },
+                                                // Scan workspace files for leaked secrets while excluding generated artifacts.
+                                                'Gitleaks': {
+                                                    sh 'mkdir -p reports/gitleaks'
+                                                    def status = sh(
+                                                        script: '''
+                                                            set -eu
+                                                            TMPDIR="$(mktemp -d)"
+                                                            cleanup() {
+                                                              rm -rf "$TMPDIR"
+                                                            }
+                                                            trap cleanup EXIT
 
-                                                    mkdir -p "$TMPDIR/repo" "$WORKSPACE/reports/gitleaks"
-                                                    tar \
-                                                      --exclude='./.git' \
-                                                      --exclude='./.scannerwork' \
-                                                      --exclude='./playwright-report' \
-                                                      --exclude='./tests/jenkins' \
-                                                      --exclude='./tests/test-results' \
-                                                      --exclude='./reports' \
-                                                      -cf - . | tar -C "$TMPDIR/repo" -xf -
+                                                            mkdir -p "$TMPDIR/repo" "$WORKSPACE/reports/gitleaks"
+                                                            tar \
+                                                              --exclude='./.git' \
+                                                              --exclude='./.scannerwork' \
+                                                              --exclude='./playwright-report' \
+                                                              --exclude='./tests/jenkins' \
+                                                              --exclude='./tests/test-results' \
+                                                              --exclude='./reports' \
+                                                              -cf - . | tar -C "$TMPDIR/repo" -xf -
 
-                                                    docker run --rm -u "$(id -u):$(id -g)" \
-                                                      -v "$TMPDIR/repo:/repo" \
-                                                      -v "$WORKSPACE/reports/gitleaks:/reports" \
-                                                      -w /repo \
-                                                      zricethezav/gitleaks:latest detect \
-                                                      --source=/repo \
-                                                      --no-git \
-                                                      --report-format json \
-                                                      --report-path /reports/gitleaks.json \
-                                                      --no-banner
-                                                ''',
-                                                returnStatus: true
+                                                            docker run --rm -u "$(id -u):$(id -g)" \
+                                                              -v "$TMPDIR/repo:/repo" \
+                                                              -v "$WORKSPACE/reports/gitleaks:/reports" \
+                                                              -w /repo \
+                                                              zricethezav/gitleaks:latest detect \
+                                                              --source=/repo \
+                                                              --no-git \
+                                                              --report-format json \
+                                                              --report-path /reports/gitleaks.json \
+                                                              --no-banner
+                                                        ''',
+                                                        returnStatus: true
+                                                    )
+                                                    if (status == 1) {
+                                                        unstable('Gitleaks detected potential secrets. See reports/gitleaks/gitleaks.json')
+                                                    } else if (status != 0) {
+                                                        unstable("Gitleaks execution failed (exit ${status}). See Jenkins logs for details.")
+                                                    } else {
+                                                        echo 'Gitleaks: no leaks detected.'
+                                                    }
+                                                }
                                             )
-                                            if (status == 1) {
-                                                unstable('Gitleaks detected potential secrets. See reports/gitleaks/gitleaks.json')
-                                            } else if (status != 0) {
-                                                unstable("Gitleaks execution failed (exit ${status}). See Jenkins logs for details.")
+                                        }
+                                    }
+                                )
+                            }
+                        },
+                        // Validate Helm chart rendering in parallel with analysis so deployment regressions surface sooner.
+                        'Helm Validation': {
+                            stage('Helm Validation') {
+                                parallel(
+                                    // Lint chart templates to catch syntax and schema issues before deployment.
+                                    'Helm Lint': {
+                                        stage('Helm Lint') {
+                                            def hasHelm = sh(script: 'command -v helm >/dev/null 2>&1', returnStatus: true) == 0
+                                            if (hasHelm) {
+                                                sh 'helm lint helm/dorfgefluester'
                                             } else {
-                                                echo 'Gitleaks: no leaks detected.'
+                                                echo 'Helm not found on agent; skipping Helm Lint.'
                                             }
                                         }
-                                    )
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // Validate Helm chart rendering in parallel with analysis so deployment regressions surface sooner.
-                stage('Helm Validation (Parallel)') {
-                    parallel {
-                        // Lint chart templates to catch syntax and schema issues before deployment.
-                        stage('Helm Lint') {
-                            steps {
-                                script {
-                                    def hasHelm = sh(script: 'command -v helm >/dev/null 2>&1', returnStatus: true) == 0
-                                    if (hasHelm) {
-                                        sh 'helm lint helm/dorfgefluester'
-                                    } else {
-                                        echo 'Helm not found on agent; skipping Helm Lint.'
+                                    },
+                                    // Render manifests and run client-side apply to verify Kubernetes compatibility.
+                                    'Helm Render (Dry Run)': {
+                                        stage('Helm Render (Dry Run)') {
+                                            def hasHelm = sh(script: 'command -v helm >/dev/null 2>&1', returnStatus: true) == 0
+                                            def hasKubectl = sh(script: 'command -v kubectl >/dev/null 2>&1', returnStatus: true) == 0
+                                            if (hasHelm && hasKubectl) {
+                                                sh """
+                                                  helm template ${RELEASE} helm/dorfgefluester \
+                                                    --namespace ${NAMESPACE} \
+                                                    --set image.repository=${IMAGE_REPO} \
+                                                    --set image.tag=ci-dry-run \
+                                                    --set ingress.host=dorf.test > /tmp/${RELEASE}-rendered.yaml
+                                                  kubectl apply --dry-run=client -f /tmp/${RELEASE}-rendered.yaml
+                                                """
+                                            } else {
+                                                echo 'Helm or kubectl not found on agent; skipping Helm Render (Dry Run).'
+                                            }
+                                        }
                                     }
-                                }
+                                )
                             }
                         }
-
-                        // Render manifests and run client-side apply to verify Kubernetes compatibility.
-                        stage('Helm Render (Dry Run)') {
-                            steps {
-                                script {
-                                    def hasHelm = sh(script: 'command -v helm >/dev/null 2>&1', returnStatus: true) == 0
-                                    def hasKubectl = sh(script: 'command -v kubectl >/dev/null 2>&1', returnStatus: true) == 0
-                                    if (hasHelm && hasKubectl) {
-                                        sh """
-                                          helm template ${RELEASE} helm/dorfgefluester \
-                                            --namespace ${NAMESPACE} \
-                                            --set image.repository=${IMAGE_REPO} \
-                                            --set image.tag=ci-dry-run \
-                                            --set ingress.host=dorf.test > /tmp/${RELEASE}-rendered.yaml
-                                          kubectl apply --dry-run=client -f /tmp/${RELEASE}-rendered.yaml
-                                        """
-                                    } else {
-                                        echo 'Helm or kubectl not found on agent; skipping Helm Render (Dry Run).'
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    )
                 }
             }
         }
