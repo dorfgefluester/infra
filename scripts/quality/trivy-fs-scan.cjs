@@ -318,6 +318,24 @@ function resolveRuntime(requestedRuntime) {
   return { runtime, hasNativeTrivy };
 }
 
+function assertPathInsideCwd(inputPath, label, { allowCwd = false } = {}) {
+  const cwd = process.cwd();
+  const absolutePath = path.resolve(cwd, String(inputPath || '.'));
+  const relativePath = path.relative(cwd, absolutePath);
+  const escapesWorkspace =
+    relativePath === '..' || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath);
+
+  if (escapesWorkspace) {
+    throw new Error(`${label} must stay within the workspace: ${inputPath}`);
+  }
+
+  if (!allowCwd && (relativePath === '' || relativePath === '.')) {
+    throw new Error(`${label} must not resolve to the workspace root: ${inputPath}`);
+  }
+
+  return absolutePath;
+}
+
 function writeFindingsArtifacts({ outJson, outSummary, outMd, maxList }) {
   const json = readJson(outJson);
   const summary = summarizeTrivy(json);
@@ -388,8 +406,8 @@ function buildContainerTrivyArgs({
 
 function runContainerTrivy({ runtime, scanPath, outJson, severity, ignoreUnfixed, skipDirs }) {
   const cwd = process.cwd();
-  const absScanPath = path.resolve(cwd, scanPath);
-  const outJsonAbs = path.resolve(cwd, outJson);
+  const absScanPath = assertPathInsideCwd(scanPath, '--path', { allowCwd: true });
+  const outJsonAbs = assertPathInsideCwd(outJson, '--out-json');
   const cacheDir = path.join(cwd, 'reports', 'trivy', 'cache');
   const cacheDirAbs = path.resolve(cacheDir);
   const containerScanPath = '/src';
@@ -409,7 +427,8 @@ function runContainerTrivy({ runtime, scanPath, outJson, severity, ignoreUnfixed
 
   ensureDirForFile(path.join(cacheDir, '.keep'));
 
-  const res = spawnSync(runtime, containerArgs, { stdio: 'inherit' });
+  const runtimeBinary = runtime === 'podman' ? 'podman' : 'docker';
+  const res = spawnSync(runtimeBinary, containerArgs, { stdio: 'inherit' });
   if (res.status !== 0) {
     throw new Error(`Trivy scan failed with exit code ${res.status}`);
   }
@@ -456,6 +475,7 @@ function main() {
 }
 
 module.exports = {
+  assertPathInsideCwd,
   buildContainerTrivyArgs,
   parseBoolean,
   renderTrivyMarkdown,
