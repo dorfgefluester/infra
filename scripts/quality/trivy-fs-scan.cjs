@@ -1,5 +1,6 @@
 const { spawnSync } = require('child_process');
 const path = require('path');
+const { fileURLToPath, pathToFileURL } = require('url');
 
 const { parseArgs } = require('./cli-args.cjs');
 const { ensureDirForFile, readJson, writeText } = require('./fs-utils.cjs');
@@ -319,21 +320,36 @@ function resolveRuntime(requestedRuntime) {
 }
 
 function assertPathInsideCwd(inputPath, label, { allowCwd = false } = {}) {
-  const cwd = process.cwd();
-  const absolutePath = path.resolve(cwd, String(inputPath || '.'));
-  const relativePath = path.relative(cwd, absolutePath);
-  const escapesWorkspace =
-    relativePath === '..' || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath);
+  const rawPath = String(inputPath || '.').trim();
 
-  if (escapesWorkspace) {
+  if (rawPath === '') {
+    throw new Error(`${label} must not be empty.`);
+  }
+
+  if (path.isAbsolute(rawPath)) {
     throw new Error(`${label} must stay within the workspace: ${inputPath}`);
   }
 
-  if (!allowCwd && (relativePath === '' || relativePath === '.')) {
+  const normalizedPath = path.normalize(rawPath);
+  const pathSegments = normalizedPath
+    .split(path.sep)
+    .filter((segment) => segment !== '' && segment !== '.');
+
+  if (pathSegments.some((segment) => segment === '..')) {
+    throw new Error(`${label} must stay within the workspace: ${inputPath}`);
+  }
+
+  if (!allowCwd && pathSegments.length === 0) {
     throw new Error(`${label} must not resolve to the workspace root: ${inputPath}`);
   }
 
-  return absolutePath;
+  const cwd = process.cwd();
+  const cwdUrl = pathToFileURL(cwd.endsWith(path.sep) ? cwd : `${cwd}${path.sep}`);
+  const relativeUrlPath = pathSegments.length === 0 ? './' : pathSegments.map(encodeURIComponent).join('/');
+
+  const resolvedPath = path.normalize(fileURLToPath(new URL(relativeUrlPath, cwdUrl)));
+
+  return pathSegments.length === 0 ? cwd : resolvedPath;
 }
 
 function writeFindingsArtifacts({ outJson, outSummary, outMd, maxList }) {
