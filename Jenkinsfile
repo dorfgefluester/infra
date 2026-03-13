@@ -29,8 +29,9 @@ pipeline {
         BUILD_ALLOWED = 'true'
         GIT_SHA = ''
         IMAGE_TAG = ''
-        // Keep dependency/scanner caches in a persistent per-job location outside the workspace wipe path.
-        CACHE_ROOT = "${HOME}/.cache/jenkins/${PROJECT_NAME}"
+        // Keep dependency/scanner caches in the per-job workspace tmp area so the Dockerized CI stages can
+        // write to them while still surviving the workspace wipe in "Prepare Workspace".
+        CACHE_ROOT = "${WORKSPACE}@tmp/.cache/jenkins/${PROJECT_NAME}"
         JOB_CACHE_DIR = "${CACHE_ROOT}/${JOB_NAME}"
         JOB_CACHE_TOUCH_FILE = "${JOB_CACHE_DIR}/.last-used"
         NPM_CACHE_DIR = "${JOB_CACHE_DIR}/npm"
