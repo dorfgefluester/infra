@@ -29,13 +29,14 @@ pipeline {
         BUILD_ALLOWED = 'true'
         GIT_SHA = ''
         IMAGE_TAG = ''
-        // Keep dependency/scanner caches outside the wiped workspace root.
-        // Jenkins creates a per-workspace temp directory at "$WORKSPACE@tmp" which is not removed by "Prepare Workspace".
-        WORKSPACE_TMP = "${WORKSPACE}@tmp"
-        NPM_CACHE_DIR = "${WORKSPACE_TMP}/.npm-cache"
-        TRIVY_FS_CACHE_DIR = "${WORKSPACE_TMP}/.trivy-fs-cache"
-        TRIVY_IMAGE_CACHE_DIR = "${WORKSPACE_TMP}/.trivy-image-cache"
-        DOCKER_BUILDX_CACHE_DIR = "${WORKSPACE_TMP}/.docker-buildx-cache"
+        // Keep dependency/scanner caches in a persistent per-job location outside the workspace wipe path.
+        CACHE_ROOT = "${HOME}/.cache/jenkins/${PROJECT_NAME}"
+        JOB_CACHE_DIR = "${CACHE_ROOT}/${JOB_NAME}"
+        JOB_CACHE_TOUCH_FILE = "${JOB_CACHE_DIR}/.last-used"
+        NPM_CACHE_DIR = "${JOB_CACHE_DIR}/npm"
+        TRIVY_FS_CACHE_DIR = "${JOB_CACHE_DIR}/trivy-fs"
+        TRIVY_IMAGE_CACHE_DIR = "${JOB_CACHE_DIR}/trivy-image"
+        DOCKER_BUILDX_CACHE_DIR = "${JOB_CACHE_DIR}/docker-buildx"
     }
 
     stages {
@@ -188,6 +189,8 @@ pipeline {
                 stage('Install Dependencies') {
                     steps {
                         sh '''
+                            mkdir -p "$(dirname "$JOB_CACHE_TOUCH_FILE")"
+                            touch "$JOB_CACHE_TOUCH_FILE"
                             mkdir -p "$NPM_CACHE_DIR"
                             npm ci --cache "$NPM_CACHE_DIR" --prefer-offline --no-audit --no-fund
                         '''
@@ -418,6 +421,8 @@ pipeline {
                                 // Scan the repository filesystem for high/critical issues without failing the pipeline.
                                 'Trivy FS Scan': {
                                     sh '''
+                                        mkdir -p "$(dirname "$JOB_CACHE_TOUCH_FILE")"
+                                        touch "$JOB_CACHE_TOUCH_FILE"
                                         mkdir -p reports/trivy
                                         mkdir -p "$TRIVY_FS_CACHE_DIR"
                                         docker run --rm -u "$(id -u):$(id -g)" \
@@ -716,6 +721,8 @@ pipeline {
             def buildxCacheDir = "${env.DOCKER_BUILDX_CACHE_DIR}"
             sh """
                 set -eu
+                mkdir -p "\$(dirname '${env.JOB_CACHE_TOUCH_FILE}')"
+                touch '${env.JOB_CACHE_TOUCH_FILE}'
                 mkdir -p '${buildxCacheDir}'
                 if docker buildx version >/dev/null 2>&1; then
                   export DOCKER_BUILDKIT=1
