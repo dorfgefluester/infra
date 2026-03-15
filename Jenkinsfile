@@ -120,17 +120,13 @@ pipeline {
             }
         }
 
-        // Run compile, lint, tests, and optional E2E in a Node 20 container for parity across projects.
+        // Run compile, lint, tests, and optional E2E directly on the Jenkins agent.
+        // The nested docker agent wrapper has been unstable on these workers: once the remoting
+        // channel flaps, Jenkins frequently cannot reconnect to or tear down the CI container and
+        // the build hangs until the global timeout expires.
         stage('CI') {
             when {
                 expression { return env.BUILD_ALLOWED == 'true' }
-            }
-            agent {
-                docker {
-                    image "node:${NODE_VERSION}"
-                    args "--entrypoint=''"
-                    reuseNode true
-                }
             }
             stages {
                 // Perform a resilient checkout and set a deterministic image tag from git SHA.
@@ -273,6 +269,8 @@ pipeline {
                         }
 
                         // Execute tests and publish JUnit-compatible reports for Jenkins visibility.
+                        // Keep Jest single-process in CI to reduce memory pressure and avoid worker
+                        // teardown leaks on the shared Jenkins agents.
                         stage('Test') {
                             steps {
                                 script {
@@ -281,10 +279,10 @@ pipeline {
                                     sh "mkdir -p ${junitDir}"
                                     if (hasJunit) {
                                         withEnv(["JEST_JUNIT_OUTPUT_DIR=${junitDir}", "JEST_JUNIT_OUTPUT_NAME=jest-junit.xml"]) {
-                                            sh 'npm test -- --ci --coverage=false --reporters=default --reporters=jest-junit'
+                                            sh 'npm test -- --ci --runInBand --coverage=false --reporters=default --reporters=jest-junit'
                                         }
                                     } else {
-                                        sh 'npm test -- --ci --coverage=false --json --outputFile=tests/junit/jest.json'
+                                        sh 'npm test -- --ci --runInBand --coverage=false --json --outputFile=tests/junit/jest.json'
                                         sh 'node scripts/jest-json-to-junit.cjs tests/junit/jest.json tests/junit/jest-junit.xml'
                                     }
                                 }
@@ -302,7 +300,7 @@ pipeline {
                 stage('Coverage (Non-Blocking)') {
                     steps {
                         catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                            sh 'npm run test:coverage --if-present'
+                            sh 'npm run test:coverage --if-present -- --runInBand'
                         }
                     }
                     post {
