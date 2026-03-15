@@ -452,7 +452,15 @@ pipeline {
                 // Run npm audit as a dependency-risk signal while keeping delivery non-blocking.
                 stage('npm Audit') {
                     steps {
-                        sh 'npm audit --audit-level=high --package-lock-only || true'
+                        sh '''
+                            mkdir -p reports/npm-audit
+                            audit_status=0
+                            npm audit --json --package-lock-only > reports/npm-audit/audit.json || audit_status=$?
+                            node scripts/quality/npm-audit-summary.cjs \
+                              --input reports/npm-audit/audit.json \
+                              --label "npm Audit"
+                            exit 0
+                        '''
                     }
                 }
                 // Scan workspace files for leaked secrets while excluding generated artifacts.
