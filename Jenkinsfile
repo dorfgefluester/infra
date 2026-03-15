@@ -452,15 +452,32 @@ pipeline {
                 // Run npm audit as a dependency-risk signal while keeping delivery non-blocking.
                 stage('npm Audit') {
                     steps {
-                        sh '''
-                            mkdir -p reports/npm-audit
-                            audit_status=0
-                            npm audit --json --package-lock-only > reports/npm-audit/audit.json || audit_status=$?
-                            node scripts/quality/npm-audit-summary.cjs \
-                              --input reports/npm-audit/audit.json \
-                              --label "npm Audit"
-                            exit 0
-                        '''
+                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                            script {
+                                sh '''
+                                    mkdir -p reports/npm-audit
+                                    audit_status=0
+                                    npm audit --json --package-lock-only > reports/npm-audit/audit.json || audit_status=$?
+                                    printf '%s\n' "$audit_status" > reports/npm-audit/exit-code.txt
+                                    node scripts/quality/npm-audit-summary.cjs \
+                                      --input reports/npm-audit/audit.json \
+                                      --label "npm Audit"
+                                    exit 0
+                                '''
+
+                                def auditReport = readJSON file: 'reports/npm-audit/audit.json'
+                                def vulnerabilityCounts = auditReport?.metadata?.vulnerabilities ?: [:]
+                                int criticalCount = (vulnerabilityCounts.critical ?: 0) as int
+                                int highCount = (vulnerabilityCounts.high ?: 0) as int
+                                int auditExitCode = readFile('reports/npm-audit/exit-code.txt').trim() as int
+
+                                if (criticalCount > 0 || highCount > 0) {
+                                    unstable("npm audit found ${criticalCount} critical and ${highCount} high vulnerabilities from package-lock.json.")
+                                } else if (auditExitCode != 0) {
+                                    echo "npm audit exited with code ${auditExitCode}, but no high/critical vulnerabilities were reported."
+                                }
+                            }
+                        }
                     }
                 }
                 // Scan workspace files for leaked secrets while excluding generated artifacts.
