@@ -21,4 +21,3 @@ function readJson(filePath) {
 }
 
 module.exports = { ensureDirForFile, writeText, writeJson, readJson };
-

@@ -29,12 +29,15 @@ pipeline {
         BUILD_ALLOWED = 'true'
         GIT_SHA = ''
         IMAGE_TAG = ''
-        // Keep dependency/scanner caches outside the wiped workspace root.
-        // Jenkins creates a per-workspace temp directory at "$WORKSPACE@tmp" which is not removed by "Prepare Workspace".
-        WORKSPACE_TMP = "${WORKSPACE}@tmp"
-        NPM_CACHE_DIR = "${WORKSPACE_TMP}/.npm-cache"
-        TRIVY_FS_CACHE_DIR = "${WORKSPACE_TMP}/.trivy-fs-cache"
-        TRIVY_IMAGE_CACHE_DIR = "${WORKSPACE_TMP}/.trivy-image-cache"
+        // Keep dependency/scanner caches in the per-job workspace tmp area so the Dockerized CI stages can
+        // write to them while still surviving the workspace wipe in "Prepare Workspace".
+        CACHE_ROOT = "${WORKSPACE}@tmp/.cache/jenkins/${PROJECT_NAME}"
+        JOB_CACHE_DIR = "${CACHE_ROOT}/${JOB_NAME}"
+        JOB_CACHE_TOUCH_FILE = "${JOB_CACHE_DIR}/.last-used"
+        NPM_CACHE_DIR = "${JOB_CACHE_DIR}/npm"
+        TRIVY_FS_CACHE_DIR = "${JOB_CACHE_DIR}/trivy-fs"
+        TRIVY_IMAGE_CACHE_DIR = "${JOB_CACHE_DIR}/trivy-image"
+        DOCKER_BUILDX_CACHE_DIR = "${JOB_CACHE_DIR}/docker-buildx"
     }
 
     stages {
@@ -183,83 +186,79 @@ pipeline {
                 stage('Install Dependencies') {
                     steps {
                         sh '''
+                            mkdir -p "$(dirname "$JOB_CACHE_TOUCH_FILE")"
+                            touch "$JOB_CACHE_TOUCH_FILE"
                             mkdir -p "$NPM_CACHE_DIR"
                             npm ci --cache "$NPM_CACHE_DIR" --prefer-offline --no-audit --no-fund
                         '''
                     }
                 }
 
-                // Build production assets early so downstream stages validate real outputs.
-                stage('Build') {
-                    steps {
-                        sh 'npm run build'
-                    }
-                    post {
-                        success {
-                            archiveArtifacts artifacts: 'dist/**/*', fingerprint: true, allowEmptyArchive: false
-                        }
-                    }
-                }
-
-                // Enforce bundle-size budgets to prevent silent frontend payload regressions.
-                stage('Bundle Budget') {
-                    steps {
-                        script {
-                            def isReleaseBranch = (env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/)
-                            def maxIndexKb = isReleaseBranch ? 450 : 550
-                            def maxPhaserKb = isReleaseBranch ? 1600 : 1700
-                            def maxTotalKb = isReleaseBranch ? 2100 : 2300
-                            sh """
-                                node -e '
-                                const fs = require(\"fs\");
-                                const path = require(\"path\");
-                                const dir = path.join(\"dist\", \"assets\");
-                                if (!fs.existsSync(dir)) {
-                                  console.error(\"Bundle budget check failed: dist/assets not found.\");
-                                  process.exit(1);
-                                }
-                                const files = fs.readdirSync(dir).filter((name) => name.endsWith(\".js\"));
-                                const stats = files.map((name) => ({ name, bytes: fs.statSync(path.join(dir, name)).size }));
-                                const findByPrefix = (prefix) => stats.find((entry) => entry.name.startsWith(prefix));
-                                const indexChunk = findByPrefix(\"index-\");
-                                const phaserChunk = findByPrefix(\"phaser-\");
-                                const totalBytes = stats.reduce((sum, entry) => sum + entry.bytes, 0);
-
-                                const limits = {
-                                  index: ${maxIndexKb} * 1024,
-                                  phaser: ${maxPhaserKb} * 1024,
-                                  total: ${maxTotalKb} * 1024
-                                };
-
-                                const violations = [];
-                                if (!indexChunk) {
-                                  violations.push(\"Missing index-* chunk in dist/assets.\");
-                                } else if (indexChunk.bytes > limits.index) {
-                                  violations.push(`index chunk \${(indexChunk.bytes / 1024).toFixed(2)} KiB exceeds ${maxIndexKb} KiB.`);
-                                }
-                                if (!phaserChunk) {
-                                  violations.push(\"Missing phaser-* chunk in dist/assets.\");
-                                } else if (phaserChunk.bytes > limits.phaser) {
-                                  violations.push(`phaser chunk \${(phaserChunk.bytes / 1024).toFixed(2)} KiB exceeds ${maxPhaserKb} KiB.`);
-                                }
-                                if (totalBytes > limits.total) {
-                                  violations.push(`total JS bundle \${(totalBytes / 1024).toFixed(2)} KiB exceeds ${maxTotalKb} KiB.`);
-                                }
-
-                                console.log(`Bundle sizes: index=\${indexChunk ? (indexChunk.bytes / 1024).toFixed(2) : \"n/a\"} KiB, phaser=\${phaserChunk ? (phaserChunk.bytes / 1024).toFixed(2) : \"n/a\"} KiB, total=\${(totalBytes / 1024).toFixed(2)} KiB.`);
-                                if (violations.length > 0) {
-                                  console.error(\"Bundle budget violations:\\n - \" + violations.join(\"\\n - \"));
-                                  process.exit(1);
-                                }
-                                '
-                            """
-                        }
-                    }
-                }
-
-                // Run static checks and test execution in parallel to reduce CI cycle time.
-                stage('Lint & Test') {
+                // Run the expensive CI checks in parallel once dependencies are installed.
+                stage('CI Checks') {
                     parallel {
+                        // Build production assets, archive them, and validate bundle-size budgets in one branch.
+                        stage('Build & Bundle Budget') {
+                            steps {
+                                sh 'npm run build'
+                                script {
+                                    def isReleaseBranch = (env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/)
+                                    def maxIndexKb = isReleaseBranch ? 450 : 550
+                                    def maxPhaserKb = isReleaseBranch ? 1600 : 1700
+                                    def maxTotalKb = isReleaseBranch ? 2100 : 2300
+                                    sh """
+                                        node -e '
+                                        const fs = require(\"fs\");
+                                        const path = require(\"path\");
+                                        const dir = path.join(\"dist\", \"assets\");
+                                        if (!fs.existsSync(dir)) {
+                                          console.error(\"Bundle budget check failed: dist/assets not found.\");
+                                          process.exit(1);
+                                        }
+                                        const files = fs.readdirSync(dir).filter((name) => name.endsWith(\".js\"));
+                                        const stats = files.map((name) => ({ name, bytes: fs.statSync(path.join(dir, name)).size }));
+                                        const findByPrefix = (prefix) => stats.find((entry) => entry.name.startsWith(prefix));
+                                        const indexChunk = findByPrefix(\"index-\");
+                                        const phaserChunk = findByPrefix(\"phaser-\");
+                                        const totalBytes = stats.reduce((sum, entry) => sum + entry.bytes, 0);
+
+                                        const limits = {
+                                          index: ${maxIndexKb} * 1024,
+                                          phaser: ${maxPhaserKb} * 1024,
+                                          total: ${maxTotalKb} * 1024
+                                        };
+
+                                        const violations = [];
+                                        if (!indexChunk) {
+                                          violations.push(\"Missing index-* chunk in dist/assets.\");
+                                        } else if (indexChunk.bytes > limits.index) {
+                                          violations.push(`index chunk \${(indexChunk.bytes / 1024).toFixed(2)} KiB exceeds ${maxIndexKb} KiB.`);
+                                        }
+                                        if (!phaserChunk) {
+                                          violations.push(\"Missing phaser-* chunk in dist/assets.\");
+                                        } else if (phaserChunk.bytes > limits.phaser) {
+                                          violations.push(`phaser chunk \${(phaserChunk.bytes / 1024).toFixed(2)} KiB exceeds ${maxPhaserKb} KiB.`);
+                                        }
+                                        if (totalBytes > limits.total) {
+                                          violations.push(`total JS bundle \${(totalBytes / 1024).toFixed(2)} KiB exceeds ${maxTotalKb} KiB.`);
+                                        }
+
+                                        console.log(`Bundle sizes: index=\${indexChunk ? (indexChunk.bytes / 1024).toFixed(2) : \"n/a\"} KiB, phaser=\${phaserChunk ? (phaserChunk.bytes / 1024).toFixed(2) : \"n/a\"} KiB, total=\${(totalBytes / 1024).toFixed(2)} KiB.`);
+                                        if (violations.length > 0) {
+                                          console.error(\"Bundle budget violations:\\n - \" + violations.join(\"\\n - \"));
+                                          process.exit(1);
+                                        }
+                                        '
+                                    """
+                                }
+                            }
+                            post {
+                                success {
+                                    archiveArtifacts artifacts: 'dist/**/*', fingerprint: true, allowEmptyArchive: false
+                                }
+                            }
+                        }
+
                         // Enforce lint rules before delivery to keep code quality consistent.
                         stage('Lint') {
                             steps {
@@ -268,9 +267,8 @@ pipeline {
                             }
                         }
 
-                        // Execute tests and publish JUnit-compatible reports for Jenkins visibility.
-                        // Keep Jest single-process in CI to reduce memory pressure and avoid worker
-                        // teardown leaks on the shared Jenkins agents.
+                        // Execute tests once with coverage enabled so JUnit, coverage artifacts, and Sonar inputs
+                        // are produced from a single Jest invocation.
                         stage('Test') {
                             steps {
                                 script {
@@ -279,10 +277,10 @@ pipeline {
                                     sh "mkdir -p ${junitDir}"
                                     if (hasJunit) {
                                         withEnv(["JEST_JUNIT_OUTPUT_DIR=${junitDir}", "JEST_JUNIT_OUTPUT_NAME=jest-junit.xml"]) {
-                                            sh 'npm test -- --ci --runInBand --coverage=false --reporters=default --reporters=jest-junit'
+                                            sh 'npm test -- --ci --coverage --reporters=default --reporters=jest-junit'
                                         }
                                     } else {
-                                        sh 'npm test -- --ci --runInBand --coverage=false --json --outputFile=tests/junit/jest.json'
+                                        sh 'npm test -- --ci --coverage --json --outputFile=tests/junit/jest.json'
                                         sh 'node scripts/jest-json-to-junit.cjs tests/junit/jest.json tests/junit/jest-junit.xml'
                                     }
                                 }
@@ -290,22 +288,9 @@ pipeline {
                             post {
                                 always {
                                     junit testResults: 'tests/junit/**/*.xml', allowEmptyResults: true
+                                    archiveArtifacts artifacts: 'tests/coverage/**/*', fingerprint: true, allowEmptyArchive: true
                                 }
                             }
-                        }
-                    }
-                }
-
-                // Publish coverage as a non-blocking quality signal to avoid halting delivery.
-                stage('Coverage (Non-Blocking)') {
-                    steps {
-                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                            sh 'npm run test:coverage --if-present -- --runInBand'
-                        }
-                    }
-                    post {
-                        always {
-                            archiveArtifacts artifacts: 'tests/coverage/**/*', fingerprint: true, allowEmptyArchive: true
                         }
                     }
                 }
@@ -382,8 +367,8 @@ pipeline {
             }
         }
 
-        // Run code-quality analysis and security checks in parallel for faster feedback.
-        stage('Analysis & Security') {
+        // Run the independent validation workstreams in parallel to shorten post-test feedback.
+        stage('Validation & Analysis') {
             when {
                 expression { return env.BUILD_ALLOWED == 'true' }
             }
@@ -418,67 +403,135 @@ pipeline {
                         }
                     }
                 }
+                // Scan the repository filesystem for high/critical issues without failing the pipeline.
+                stage('Trivy FS Scan') {
+                    steps {
+                        sh '''
+                            mkdir -p "$(dirname "$JOB_CACHE_TOUCH_FILE")"
+                            touch "$JOB_CACHE_TOUCH_FILE"
+                            mkdir -p reports/trivy
+                            mkdir -p "$TRIVY_FS_CACHE_DIR"
+                            docker run --rm -u "$(id -u):$(id -g)" \
+                              -v "$WORKSPACE:/src" \
+                              -v "$TRIVY_FS_CACHE_DIR:/tmp/trivy-cache" \
+                              aquasec/trivy fs /src \
+                              --cache-dir /tmp/trivy-cache \
+                              --format json --output /src/reports/trivy/fs.json \
+                              --exit-code 0 --severity HIGH,CRITICAL --ignore-unfixed || true
+                        '''
+                        sh 'node scripts/quality/trivy-summary.cjs --input reports/trivy/fs.json --label "Trivy FS Scan"'
+                    }
+                }
+                // Run Semgrep SAST ruleset for fast pattern-based vulnerability detection.
+                stage('Semgrep') {
+                    steps {
+                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                            retry(2) {
+                                script {
+                                    def semgrepStatus = sh(
+                                        script: '''
+                                            docker run --rm -u "$(id -u):$(id -g)" -v "$WORKSPACE:/src" \
+                                              returntocorp/semgrep semgrep scan /src \
+                                              --config auto --error
+                                        ''',
+                                        returnStatus: true
+                                    )
 
-                // Execute independent security scans in parallel so one slow scan does not block others.
-	                stage('Security Scans') {
-	                    steps {
-	                        script {
-	                            parallel(
-                                // Scan the repository filesystem for high/critical issues without failing the pipeline.
-                                'Trivy FS Scan': {
-                                    sh '''
-                                        mkdir -p reports/trivy
-                                        mkdir -p "$TRIVY_FS_CACHE_DIR"
-                                        docker run --rm -u "$(id -u):$(id -g)" \
-                                          -v "$WORKSPACE:/src" \
-                                          -v "$TRIVY_FS_CACHE_DIR:/tmp/trivy-cache" \
-                                          aquasec/trivy fs /src \
-                                          --cache-dir /tmp/trivy-cache \
-                                          --format json --output /src/reports/trivy/fs.json \
-                                          --exit-code 0 --severity HIGH,CRITICAL --ignore-unfixed || true
-                                    '''
-                                },
-                                // Run Semgrep SAST ruleset for fast pattern-based vulnerability detection.
-                                'Semgrep': {
-                                    sh '''
-                                        docker run --rm -u "$(id -u):$(id -g)" -v "$WORKSPACE:/src" \
-                                          returntocorp/semgrep semgrep scan /src \
-                                          --config auto --error || true
-                                    '''
-                                },
-	                                // Run npm audit as a dependency-risk signal while keeping delivery non-blocking.
-	                                'npm Audit': {
-	                                    sh 'npm audit --audit-level=high --package-lock-only || true'
-	                                },
-	                                // Scan workspace files for leaked secrets while excluding generated artifacts.
-	                                'Gitleaks': {
-	                                    sh 'mkdir -p reports/gitleaks'
-	                                    def status = sh(
-	                                        script: '''
-	                                            docker run --rm -u "$(id -u):$(id -g)" \
-	                                              -v "$WORKSPACE:/repo" -w /repo \
-                                              zricethezav/gitleaks:latest detect \
-	                                              --source=/repo \
-	                                              --no-git \
-	                                              --path-exclude=/repo/playwright-report \
-	                                              --path-exclude=/repo/tests/test-results \
-	                                              --path-exclude=/repo/reports \
-	                                              --report-format json \
-	                                              --report-path /repo/reports/gitleaks/gitleaks.json \
-	                                              --no-banner
-	                                        ''',
-	                                        returnStatus: true
-	                                    )
-	                                    if (status != 0) {
-	                                        unstable("Gitleaks detected potential secrets (exit ${status}). See reports/gitleaks/gitleaks.json")
-	                                    } else {
-	                                        echo 'Gitleaks: no leaks detected.'
-	                                    }
-	                                }
-	                            )
-	                        }
-	                    }
-	                }
+                                    if (semgrepStatus != 0) {
+                                        unstable("Semgrep reported findings or returned exit code ${semgrepStatus}.")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                // Run npm audit as a dependency-risk signal while keeping delivery non-blocking.
+                stage('npm Audit') {
+                    steps {
+                        sh 'npm audit --audit-level=high --package-lock-only || true'
+                    }
+                }
+                // Scan workspace files for leaked secrets while excluding generated artifacts.
+                stage('Gitleaks') {
+                    steps {
+                        script {
+                            sh 'mkdir -p reports/gitleaks'
+                            def status = sh(
+                                script: '''
+                                    set -eu
+                                    TMPDIR="$(mktemp -d)"
+                                    cleanup() {
+                                      rm -rf "$TMPDIR"
+                                    }
+                                    trap cleanup EXIT
+
+                                    mkdir -p "$TMPDIR/repo" "$WORKSPACE/reports/gitleaks"
+                                    tar \
+                                      --exclude='./.git' \
+                                      --exclude='./.scannerwork' \
+                                      --exclude='./playwright-report' \
+                                      --exclude='./tests/jenkins' \
+                                      --exclude='./tests/test-results' \
+                                      --exclude='./reports' \
+                                      -cf - . | tar -C "$TMPDIR/repo" -xf -
+
+                                    docker run --rm -u "$(id -u):$(id -g)" \
+                                      -v "$TMPDIR/repo:/repo" \
+                                      -v "$WORKSPACE/reports/gitleaks:/reports" \
+                                      -w /repo \
+                                      zricethezav/gitleaks:latest detect \
+                                      --source=/repo \
+                                      --no-git \
+                                      --report-format json \
+                                      --report-path /reports/gitleaks.json \
+                                      --no-banner
+                                ''',
+                                returnStatus: true
+                            )
+                            if (status == 1) {
+                                unstable('Gitleaks detected potential secrets. See reports/gitleaks/gitleaks.json')
+                            } else if (status != 0) {
+                                unstable("Gitleaks execution failed (exit ${status}). See Jenkins logs for details.")
+                            } else {
+                                echo 'Gitleaks: no leaks detected.'
+                            }
+                        }
+                    }
+                }
+                // Lint chart templates to catch syntax and schema issues before deployment.
+                stage('Helm Lint') {
+                    steps {
+                        script {
+                            def hasHelm = sh(script: 'command -v helm >/dev/null 2>&1', returnStatus: true) == 0
+                            if (hasHelm) {
+                                sh 'helm lint helm/dorfgefluester'
+                            } else {
+                                echo 'Helm not found on agent; skipping Helm Lint.'
+                            }
+                        }
+                    }
+                }
+                // Render manifests and run client-side apply to verify Kubernetes compatibility.
+                stage('Helm Render (Dry Run)') {
+                    steps {
+                        script {
+                            def hasHelm = sh(script: 'command -v helm >/dev/null 2>&1', returnStatus: true) == 0
+                            def hasKubectl = sh(script: 'command -v kubectl >/dev/null 2>&1', returnStatus: true) == 0
+                            if (hasHelm && hasKubectl) {
+                                sh """
+                                  helm template ${RELEASE} helm/dorfgefluester \
+                                    --namespace ${NAMESPACE} \
+                                    --set image.repository=${IMAGE_REPO} \
+                                    --set image.tag=ci-dry-run \
+                                    --set ingress.host=dorf.test > /tmp/${RELEASE}-rendered.yaml
+                                  kubectl apply --dry-run=client -f /tmp/${RELEASE}-rendered.yaml
+                                """
+                            } else {
+                                echo 'Helm or kubectl not found on agent; skipping Helm Render (Dry Run).'
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -612,50 +665,6 @@ pipeline {
             }
         }
 
-        // Validate Helm chart rendering in CI so deployment failures are caught pre-release.
-        stage('Helm Validation (Parallel)') {
-            when {
-                expression { return env.BUILD_ALLOWED == 'true' }
-            }
-            parallel {
-                // Lint chart templates to catch syntax and schema issues before deployment.
-                stage('Helm Lint') {
-                    steps {
-                        script {
-                            def hasHelm = sh(script: 'command -v helm >/dev/null 2>&1', returnStatus: true) == 0
-                            if (hasHelm) {
-                                sh 'helm lint helm/dorfgefluester'
-                            } else {
-                                echo 'Helm not found on agent; skipping Helm Lint.'
-                            }
-                        }
-                    }
-                }
-
-                // Render manifests and run client-side apply to verify Kubernetes compatibility.
-                stage('Helm Render (Dry Run)') {
-                    steps {
-                        script {
-                            def hasHelm = sh(script: 'command -v helm >/dev/null 2>&1', returnStatus: true) == 0
-                            def hasKubectl = sh(script: 'command -v kubectl >/dev/null 2>&1', returnStatus: true) == 0
-                            if (hasHelm && hasKubectl) {
-                                sh """
-                                  helm template ${RELEASE} helm/dorfgefluester \
-                                    --namespace ${NAMESPACE} \
-                                    --set image.repository=${IMAGE_REPO} \
-                                    --set image.tag=ci-dry-run \
-                                    --set ingress.host=dorf.test > /tmp/${RELEASE}-rendered.yaml
-                                  kubectl apply --dry-run=client -f /tmp/${RELEASE}-rendered.yaml
-                                """
-                            } else {
-                                echo 'Helm or kubectl not found on agent; skipping Helm Render (Dry Run).'
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
         // Build, scan, push, and archive metadata for the deployable container image.
         stage('Docker Build, Scan & Push') {
             when {
@@ -684,14 +693,47 @@ pipeline {
                             }
                             if (isUnset(resolvedTag)) {
                                 error('Unable to resolve IMAGE_TAG from GIT_COMMIT or git rev-parse.')
-                            }
-                            env.GIT_SHA = resolvedTag
-                            env.IMAGE_TAG = resolvedTag
-                            echo "Using image tag ${resolvedTag}."
-                            sh "docker build -t ${IMAGE_REPO}:${resolvedTag} ."
-                        }
-                    }
-                }
+            }
+            env.GIT_SHA = resolvedTag
+            env.IMAGE_TAG = resolvedTag
+            echo "Using image tag ${resolvedTag}."
+            def deploymentEnvironment = env.BRANCH_NAME == 'master'
+                ? 'staging'
+                : ((env.BRANCH_NAME ?: 'development').trim())
+            def frontendBasePath = '/dorfgefluester/'
+            echo "Using deployment environment ${deploymentEnvironment} for frontend telemetry."
+            echo "Using frontend base path ${frontendBasePath} for production assets."
+            def buildxCacheDir = "${env.DOCKER_BUILDX_CACHE_DIR}"
+            sh """
+                set -eu
+                mkdir -p "\$(dirname '${env.JOB_CACHE_TOUCH_FILE}')"
+                touch '${env.JOB_CACHE_TOUCH_FILE}'
+                mkdir -p '${buildxCacheDir}'
+                if docker buildx version >/dev/null 2>&1; then
+                  export DOCKER_BUILDKIT=1
+                  if docker buildx inspect >/dev/null 2>&1 && docker buildx build \
+                    --load \
+                    --tag ${IMAGE_REPO}:${resolvedTag} \
+                    --build-arg VITE_DEPLOYMENT_ENVIRONMENT=${deploymentEnvironment} \
+                    --build-arg VITE_BASE_PATH=${frontendBasePath} \
+                    --cache-from type=local,src='${buildxCacheDir}' \
+                    --cache-to type=local,dest='${buildxCacheDir}-new',mode=max \
+                    .; then
+                    rm -rf '${buildxCacheDir}'
+                    mv '${buildxCacheDir}-new' '${buildxCacheDir}'
+                  else
+                    rm -rf '${buildxCacheDir}-new'
+                    echo 'docker buildx cache export unsupported on this agent; falling back to uncached docker build.'
+                    docker build --build-arg VITE_DEPLOYMENT_ENVIRONMENT=${deploymentEnvironment} --build-arg VITE_BASE_PATH=${frontendBasePath} -t ${IMAGE_REPO}:${resolvedTag} .
+                  fi
+                else
+                  echo 'docker buildx unavailable on agent; falling back to classic docker build.'
+                  docker build --build-arg VITE_DEPLOYMENT_ENVIRONMENT=${deploymentEnvironment} --build-arg VITE_BASE_PATH=${frontendBasePath} -t ${IMAGE_REPO}:${resolvedTag} .
+                fi
+            """
+        }
+    }
+}
 
                 // Scan the built image for high/critical vulnerabilities before publishing.
                 stage('Scan Docker Image') {
@@ -715,27 +757,49 @@ pipeline {
                                 'ghcr.io/aquasecurity/trivy-db:2',
                                 'public.ecr.aws/aquasecurity/trivy-db:2'
                             ]
-                            def dbReady = false
-                            for (def repo : dbRepos) {
-                                echo "Attempting Trivy DB download from ${repo}..."
-                                def dbStatus = sh(
-                                    script: """
-                                        docker run --rm \
-                                          -v '${trivyCacheDir}:/tmp/trivy-cache' \
-                                          aquasec/trivy image \
-                                          --cache-dir /tmp/trivy-cache \
-                                          --download-db-only \
-                                          --db-repository ${repo}
-                                    """,
-                                    returnStatus: true
-                                )
-                                if (dbStatus == 0) {
-                                    dbReady = true
-                                    break
+                            def trivyDbMetadata = "${trivyCacheDir}/db/metadata.json"
+                            def trivyDbTimestamp = "${trivyCacheDir}/.db-updated-at"
+                            def trivyDbTtlSeconds = 12 * 60 * 60
+                            def shouldRefreshDb = sh(
+                                script: """
+                                    set -eu
+                                    if [ ! -s '${trivyDbMetadata}' ] || [ ! -f '${trivyDbTimestamp}' ]; then
+                                      exit 0
+                                    fi
+                                    now=\$(date +%s)
+                                    updated=\$(cat '${trivyDbTimestamp}' 2>/dev/null || echo 0)
+                                    age=\$((now - updated))
+                                    [ "\$age" -ge '${trivyDbTtlSeconds}' ]
+                                """,
+                                returnStatus: true
+                            ) == 0
+
+                            if (shouldRefreshDb) {
+                                def dbReady = false
+                                for (def repo : dbRepos) {
+                                    echo "Refreshing Trivy DB from ${repo}..."
+                                    def dbStatus = sh(
+                                        script: """
+                                            docker run --rm \
+                                              -v '${trivyCacheDir}:/tmp/trivy-cache' \
+                                              aquasec/trivy image \
+                                              --cache-dir /tmp/trivy-cache \
+                                              --download-db-only \
+                                              --db-repository ${repo}
+                                        """,
+                                        returnStatus: true
+                                    )
+                                    if (dbStatus == 0) {
+                                        sh "date +%s > '${trivyDbTimestamp}'"
+                                        dbReady = true
+                                        break
+                                    }
                                 }
-                            }
-                            if (!dbReady) {
-                                error('Unable to download Trivy vulnerability DB from configured repositories.')
+                                if (!dbReady) {
+                                    error('Unable to download Trivy vulnerability DB from configured repositories.')
+                                }
+                            } else {
+                                echo 'Using cached Trivy DB (fresh enough for this build).'
                             }
 
                             def trivyCommand = """
@@ -750,11 +814,16 @@ pipeline {
                                   --exit-code 1 --severity ${isReleaseBranch ? 'CRITICAL' : 'HIGH,CRITICAL'} --ignore-unfixed \
                                   "${IMAGE_REPO}:${imageTag}"
                             """
-                            if (isReleaseBranch) {
-                                sh trivyCommand
-                            } else {
+                            def trivyStatus = sh(script: trivyCommand, returnStatus: true)
+                            if (fileExists('reports/trivy/image.json')) {
+                                sh 'node scripts/quality/trivy-summary.cjs --input reports/trivy/image.json --label "Trivy Image Scan"'
+                            }
+                            if (trivyStatus != 0) {
+                                if (isReleaseBranch) {
+                                    error("Trivy image scan failed with exit code ${trivyStatus}.")
+                                }
                                 catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                                    sh trivyCommand
+                                    error("Trivy image scan reported vulnerabilities above the configured threshold (exit ${trivyStatus}).")
                                 }
                             }
                         }

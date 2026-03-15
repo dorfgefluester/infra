@@ -110,6 +110,7 @@ npm run quality:trivy
 
 ### Outputs
 - `reports/trivy/fs.json` (full Trivy JSON output)
+- `reports/trivy/fs-summary.json` (aggregated fix-first packages, hotspot targets, top findings)
 - `docs/ci/TRIVY_FINDINGS.md` (summary + top findings for backlog)
 
 ## Pull both (recommended)
