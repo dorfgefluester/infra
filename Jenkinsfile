@@ -704,7 +704,9 @@ pipeline {
             def deploymentEnvironment = env.BRANCH_NAME == 'master'
                 ? 'staging'
                 : ((env.BRANCH_NAME ?: 'development').trim())
+            def frontendBasePath = '/dorfgefluester/'
             echo "Using deployment environment ${deploymentEnvironment} for frontend telemetry."
+            echo "Using frontend base path ${frontendBasePath} for production assets."
             def buildxCacheDir = "${env.DOCKER_BUILDX_CACHE_DIR}"
             sh """
                 set -eu
@@ -717,6 +719,7 @@ pipeline {
                     --load \
                     --tag ${IMAGE_REPO}:${resolvedTag} \
                     --build-arg VITE_DEPLOYMENT_ENVIRONMENT=${deploymentEnvironment} \
+                    --build-arg VITE_BASE_PATH=${frontendBasePath} \
                     --cache-from type=local,src='${buildxCacheDir}' \
                     --cache-to type=local,dest='${buildxCacheDir}-new',mode=max \
                     .; then
@@ -725,11 +728,11 @@ pipeline {
                   else
                     rm -rf '${buildxCacheDir}-new'
                     echo 'docker buildx cache export unsupported on this agent; falling back to uncached docker build.'
-                    docker build --build-arg VITE_DEPLOYMENT_ENVIRONMENT=${deploymentEnvironment} -t ${IMAGE_REPO}:${resolvedTag} .
+                    docker build --build-arg VITE_DEPLOYMENT_ENVIRONMENT=${deploymentEnvironment} --build-arg VITE_BASE_PATH=${frontendBasePath} -t ${IMAGE_REPO}:${resolvedTag} .
                   fi
                 else
                   echo 'docker buildx unavailable on agent; falling back to classic docker build.'
-                  docker build --build-arg VITE_DEPLOYMENT_ENVIRONMENT=${deploymentEnvironment} -t ${IMAGE_REPO}:${resolvedTag} .
+                  docker build --build-arg VITE_DEPLOYMENT_ENVIRONMENT=${deploymentEnvironment} --build-arg VITE_BASE_PATH=${frontendBasePath} -t ${IMAGE_REPO}:${resolvedTag} .
                 fi
             """
         }
