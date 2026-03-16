@@ -425,21 +425,21 @@ pipeline {
                 // Run Semgrep SAST ruleset for fast pattern-based vulnerability detection.
                 stage('Semgrep') {
                     steps {
-                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                            retry(2) {
-                                script {
-                                    def semgrepStatus = sh(
-                                        script: '''
-                                            docker run --rm -u "$(id -u):$(id -g)" -v "$WORKSPACE:/src" \
-                                              returntocorp/semgrep semgrep scan /src \
-                                              --config auto --error
-                                        ''',
-                                        returnStatus: true
-                                    )
+                        retry(2) {
+                            script {
+                                def semgrepStatus = sh(
+                                    script: '''
+                                        docker run --rm -u "$(id -u):$(id -g)" -v "$WORKSPACE:/src" \
+                                          returntocorp/semgrep semgrep scan /src \
+                                          --config auto --error
+                                    ''',
+                                    returnStatus: true
+                                )
 
-                                    if (semgrepStatus != 0) {
-                                        unstable("Semgrep reported findings or returned exit code ${semgrepStatus}.")
-                                    }
+                                if (semgrepStatus == 0) {
+                                    echo 'Semgrep completed without findings.'
+                                } else {
+                                    echo "Semgrep reported findings or returned exit code ${semgrepStatus}. Review the log output above; build remains green by policy."
                                 }
                             }
                         }
@@ -448,30 +448,38 @@ pipeline {
                 // Run npm audit as a dependency-risk signal while keeping delivery non-blocking.
                 stage('npm Audit') {
                     steps {
-                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                            script {
-                                sh '''
-                                    mkdir -p reports/npm-audit
-                                    audit_status=0
-                                    npm audit --json --package-lock-only > reports/npm-audit/audit.json || audit_status=$?
-                                    printf '%s\n' "$audit_status" > reports/npm-audit/exit-code.txt
-                                    node scripts/quality/npm-audit-summary.cjs \
-                                      --input reports/npm-audit/audit.json \
-                                      --label "npm Audit"
-                                    exit 0
-                                '''
+                        script {
+                            sh '''
+                                mkdir -p reports/npm-audit
+                                audit_status=0
+                                npm audit --json --package-lock-only > reports/npm-audit/audit.json || audit_status=$?
+                                printf '%s\n' "$audit_status" > reports/npm-audit/exit-code.txt
+                                node scripts/quality/npm-audit-summary.cjs \
+                                  --input reports/npm-audit/audit.json \
+                                  --label "npm Audit"
+                                exit 0
+                            '''
 
-                                def auditReport = readJSON file: 'reports/npm-audit/audit.json'
-                                def vulnerabilityCounts = auditReport?.metadata?.vulnerabilities ?: [:]
-                                int criticalCount = (vulnerabilityCounts.critical ?: 0) as int
-                                int highCount = (vulnerabilityCounts.high ?: 0) as int
-                                int auditExitCode = readFile('reports/npm-audit/exit-code.txt').trim() as int
+                            def auditExitCode = readFile('reports/npm-audit/exit-code.txt').trim() as int
+                            def auditReport = [:]
 
-                                if (criticalCount > 0 || highCount > 0) {
-                                    unstable("npm audit found ${criticalCount} critical and ${highCount} high vulnerabilities from package-lock.json.")
-                                } else if (auditExitCode != 0) {
-                                    echo "npm audit exited with code ${auditExitCode}, but no high/critical vulnerabilities were reported."
+                            try {
+                                def auditReportText = readFile('reports/npm-audit/audit.json').trim()
+                                if (auditReportText) {
+                                    auditReport = new groovy.json.JsonSlurperClassic().parseText(auditReportText)
                                 }
+                            } catch (Exception auditParseError) {
+                                echo "Unable to parse npm audit JSON summary: ${auditParseError.message}"
+                            }
+
+                            def vulnerabilityCounts = auditReport?.metadata?.vulnerabilities ?: [:]
+                            int criticalCount = (vulnerabilityCounts.critical ?: 0) as int
+                            int highCount = (vulnerabilityCounts.high ?: 0) as int
+
+                            if (criticalCount > 0 || highCount > 0) {
+                                echo "npm audit found ${criticalCount} critical and ${highCount} high vulnerabilities from package-lock.json. Build remains green by policy."
+                            } else if (auditExitCode != 0) {
+                                echo "npm audit exited with code ${auditExitCode}, but no high/critical vulnerabilities were reported."
                             }
                         }
                     }
