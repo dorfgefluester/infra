@@ -912,9 +912,6 @@ pipeline {
                                   "${IMAGE_REPO}:${imageTag}"
                             """
                             def trivyStatus = sh(script: trivyCommand, returnStatus: true)
-                            if (fileExists('reports/trivy/image.json')) {
-                                sh 'node scripts/quality/trivy-summary.cjs --input reports/trivy/image.json --label "Trivy Image Scan"'
-                            }
                             if (trivyStatus != 0) {
                                 if (isReleaseBranch) {
                                     error("Trivy image scan failed with exit code ${trivyStatus}.")
