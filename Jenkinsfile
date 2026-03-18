@@ -571,7 +571,7 @@ pipeline {
                                       -v "$TMPDIR/repo:/repo" \
                                       -v "$WORKSPACE/reports/gitleaks:/reports" \
                                       -w /repo \
-                                      zricethezav/gitleaks:latest detect \
+                                      zricethezav/gitleaks:v8.18.2 detect \
                                       --source=/repo \
                                       --no-git \
                                       --report-format json \
