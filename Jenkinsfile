@@ -419,7 +419,45 @@ pipeline {
                               --format json --output /src/reports/trivy/fs.json \
                               --exit-code 0 --severity HIGH,CRITICAL --ignore-unfixed || true
                         '''
-                        sh 'node scripts/quality/trivy-summary.cjs --input reports/trivy/fs.json --label "Trivy FS Scan"'
+                        sh '''
+                            node << 'EOF'
+                            const fs = require('fs');
+
+                            const inputPath = 'reports/trivy/fs.json';
+                            const label = 'Trivy FS Scan';
+
+                            function summarizeTrivyFs(path) {
+                              try {
+                                const raw = fs.readFileSync(path, 'utf8');
+                                const data = JSON.parse(raw);
+
+                                const results = Array.isArray(data.Results) ? data.Results : [];
+                                let high = 0;
+                                let critical = 0;
+
+                                for (const result of results) {
+                                  const vulns = Array.isArray(result.Vulnerabilities) ? result.Vulnerabilities : [];
+                                  for (const v of vulns) {
+                                    if (v.Severity === 'HIGH') {
+                                      high++;
+                                    } else if (v.Severity === 'CRITICAL') {
+                                      critical++;
+                                    }
+                                  }
+                                }
+
+                                console.log(`=== ${label} summary ===`);
+                                console.log(`HIGH vulnerabilities: ${high}`);
+                                console.log(`CRITICAL vulnerabilities: ${critical}`);
+                              } catch (err) {
+                                console.log(`=== ${label} summary ===`);
+                                console.log(`Unable to read or parse ${path}: ${err.message}`);
+                              }
+                            }
+
+                            summarizeTrivyFs(inputPath);
+                            EOF
+                        '''
                     }
                 }
                 // Run Semgrep SAST ruleset for fast pattern-based vulnerability detection.
