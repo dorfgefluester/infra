@@ -492,27 +492,48 @@ pipeline {
                                 audit_status=0
                                 npm audit --json --package-lock-only > reports/npm-audit/audit.json || audit_status=$?
                                 printf '%s\n' "$audit_status" > reports/npm-audit/exit-code.txt
-                                node scripts/quality/npm-audit-summary.cjs \
-                                  --input reports/npm-audit/audit.json \
-                                  --label "npm Audit"
+                                node - <<'EOF'
+                                const fs = require('fs');
+                                let critical = 0;
+                                let high = 0;
+                                try {
+                                  const text = fs.readFileSync('reports/npm-audit/audit.json', 'utf8').trim();
+                                  if (text) {
+                                    const data = JSON.parse(text);
+                                    const v = (data && data.metadata && data.metadata.vulnerabilities) || {};
+                                    critical = Number.isFinite(v.critical) ? v.critical : 0;
+                                    high = Number.isFinite(v.high) ? v.high : 0;
+                                  }
+                                } catch (e) {
+                                  // leave critical/high as 0 on any error
+                                }
+                                try {
+                                  fs.writeFileSync('reports/npm-audit/summary.txt', critical + ' ' + high + '\\n', 'utf8');
+                                } catch (e) {
+                                  // if we can't write the summary, there is nothing more we can do here
+                                }
+                                EOF
                                 exit 0
                             '''
 
                             def auditExitCode = readFile('reports/npm-audit/exit-code.txt').trim() as int
-                            def auditReport = [:]
+                            int criticalCount = 0
+                            int highCount = 0
 
                             try {
-                                def auditReportText = readFile('reports/npm-audit/audit.json').trim()
-                                if (auditReportText) {
-                                    auditReport = new groovy.json.JsonSlurperClassic().parseText(auditReportText)
+                                def summaryText = readFile('reports/npm-audit/summary.txt').trim()
+                                if (summaryText) {
+                                    def parts = summaryText.tokenize(' \t')
+                                    if (parts.size() >= 1) {
+                                        criticalCount = (parts[0] ?: '0') as int
+                                    }
+                                    if (parts.size() >= 2) {
+                                        highCount = (parts[1] ?: '0') as int
+                                    }
                                 }
                             } catch (Exception auditParseError) {
-                                echo "Unable to parse npm audit JSON summary: ${auditParseError.message}"
+                                echo "Unable to read npm audit summary: ${auditParseError.message}"
                             }
-
-                            def vulnerabilityCounts = auditReport?.metadata?.vulnerabilities ?: [:]
-                            int criticalCount = (vulnerabilityCounts.critical ?: 0) as int
-                            int highCount = (vulnerabilityCounts.high ?: 0) as int
 
                             if (criticalCount > 0 || highCount > 0) {
                                 echo "npm audit found ${criticalCount} critical and ${highCount} high vulnerabilities from package-lock.json. Build remains green by policy."
