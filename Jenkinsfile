@@ -662,33 +662,38 @@ pipeline {
                 catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
                     withSonarQubeEnv('SonarQube') {
                         sh '''
-                            docker run --rm -u "$(id -u):$(id -g)" \
-                              -v "$WORKSPACE:/work" -w /work \
-                              -e SONAR_HOST_URL="$SONAR_HOST_URL" \
-                              -e SONAR_TOKEN="$SONAR_AUTH_TOKEN" \
-                              node:20 \
-                              node scripts/quality/sonarqube-export.cjs \
-                                --project-key dorfgefluester \
-                                --out-json reports/sonarqube/issues.json \
-                                --out-md reports/sonarqube/issues.md
+                            if [ -f scripts/quality/sonarqube-export.cjs ] && [ -f scripts/quality/sonar-report.cjs ]; then
+                              docker run --rm -u "$(id -u):$(id -g)" \
+                                -v "$WORKSPACE:/work" -w /work \
+                                -e SONAR_HOST_URL="$SONAR_HOST_URL" \
+                                -e SONAR_TOKEN="$SONAR_AUTH_TOKEN" \
+                                node:20 \
+                                node scripts/quality/sonarqube-export.cjs \
+                                  --project-key dorfgefluester \
+                                  --out-json reports/sonarqube/issues.json \
+                                  --out-md reports/sonarqube/issues.md
 
-                            docker run --rm -u "$(id -u):$(id -g)" \
-                              -v "$WORKSPACE:/work" -w /work \
-                              -e SONAR_HOST_URL="$SONAR_HOST_URL" \
-                              -e SONAR_TOKEN="$SONAR_AUTH_TOKEN" \
-                              node:20 \
-                              node scripts/quality/sonar-report.cjs \
-                                --project-key dorfgefluester \
-                                --out-json reports/sonarqube/sonar-report.json \
-                                --out-md reports/sonarqube/sonar-report.md \
-                                --strict false
+                              docker run --rm -u "$(id -u):$(id -g)" \
+                                -v "$WORKSPACE:/work" -w /work \
+                                -e SONAR_HOST_URL="$SONAR_HOST_URL" \
+                                -e SONAR_TOKEN="$SONAR_AUTH_TOKEN" \
+                                node:20 \
+                                node scripts/quality/sonar-report.cjs \
+                                  --project-key dorfgefluester \
+                                  --out-json reports/sonarqube/sonar-report.json \
+                                  --out-md reports/sonarqube/sonar-report.md \
+                                  --strict false
 
-                            echo ""
-                            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-                            echo "SonarQube Report (from reports/sonarqube/sonar-report.md)"
-                            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-                            echo ""
-                            sed -n '1,220p' reports/sonarqube/sonar-report.md || true
+                              echo ""
+                              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                              echo "SonarQube Report (from reports/sonarqube/sonar-report.md)"
+                              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                              echo ""
+                              sed -n '1,220p' reports/sonarqube/sonar-report.md || true
+                            else
+                              echo "SonarQube export scripts not found (scripts/quality/sonarqube-export.cjs, scripts/quality/sonar-report.cjs)."
+                              echo "Skipping Export Findings stage."
+                            fi
                         '''
                     }
                 }
