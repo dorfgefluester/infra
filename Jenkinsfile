@@ -362,10 +362,9 @@ pipeline {
 
                         sh "${dockerRunBase} 'npx playwright --version'"
 
-	                        if (runHappyPath) {
-	                            sh "${dockerRunBase} 'npx playwright test tests/e2e/ui-interactions.spec.js --project=chromium --grep \"should open settings modal\"'"
-	                            sh "${dockerRunBase} 'npx playwright test tests/e2e/accessibility.spec.js --project=chromium'"
-	                        }
+                        if (runHappyPath) {
+                            sh "${dockerRunBase} 'npm run test:e2e:smoke -- --project=smoke-chromium'"
+                        }
 
                         if (runFullE2E) {
                             sh "${dockerRunBase} 'npm run test:e2e'"
