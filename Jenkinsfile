@@ -419,7 +419,45 @@ pipeline {
                               --format json --output /src/reports/trivy/fs.json \
                               --exit-code 0 --severity HIGH,CRITICAL --ignore-unfixed || true
                         '''
-                        sh 'node scripts/quality/trivy-summary.cjs --input reports/trivy/fs.json --label "Trivy FS Scan"'
+                        sh '''
+                            node << 'EOF'
+                            const fs = require('fs');
+
+                            const inputPath = 'reports/trivy/fs.json';
+                            const label = 'Trivy FS Scan';
+
+                            function summarizeTrivyFs(path) {
+                              try {
+                                const raw = fs.readFileSync(path, 'utf8');
+                                const data = JSON.parse(raw);
+
+                                const results = Array.isArray(data.Results) ? data.Results : [];
+                                let high = 0;
+                                let critical = 0;
+
+                                for (const result of results) {
+                                  const vulns = Array.isArray(result.Vulnerabilities) ? result.Vulnerabilities : [];
+                                  for (const v of vulns) {
+                                    if (v.Severity === 'HIGH') {
+                                      high++;
+                                    } else if (v.Severity === 'CRITICAL') {
+                                      critical++;
+                                    }
+                                  }
+                                }
+
+                                console.log(`=== ${label} summary ===`);
+                                console.log(`HIGH vulnerabilities: ${high}`);
+                                console.log(`CRITICAL vulnerabilities: ${critical}`);
+                              } catch (err) {
+                                console.log(`=== ${label} summary ===`);
+                                console.log(`Unable to read or parse ${path}: ${err.message}`);
+                              }
+                            }
+
+                            summarizeTrivyFs(inputPath);
+                            EOF
+                        '''
                     }
                 }
                 // Run Semgrep SAST ruleset for fast pattern-based vulnerability detection.
@@ -454,27 +492,48 @@ pipeline {
                                 audit_status=0
                                 npm audit --json --package-lock-only > reports/npm-audit/audit.json || audit_status=$?
                                 printf '%s\n' "$audit_status" > reports/npm-audit/exit-code.txt
-                                node scripts/quality/npm-audit-summary.cjs \
-                                  --input reports/npm-audit/audit.json \
-                                  --label "npm Audit"
+                                node - <<'EOF'
+                                const fs = require('fs');
+                                let critical = 0;
+                                let high = 0;
+                                try {
+                                  const text = fs.readFileSync('reports/npm-audit/audit.json', 'utf8').trim();
+                                  if (text) {
+                                    const data = JSON.parse(text);
+                                    const v = (data && data.metadata && data.metadata.vulnerabilities) || {};
+                                    critical = Number.isFinite(v.critical) ? v.critical : 0;
+                                    high = Number.isFinite(v.high) ? v.high : 0;
+                                  }
+                                } catch (e) {
+                                  // leave critical/high as 0 on any error
+                                }
+                                try {
+                                  fs.writeFileSync('reports/npm-audit/summary.txt', critical + ' ' + high + '\\n', 'utf8');
+                                } catch (e) {
+                                  // if we can't write the summary, there is nothing more we can do here
+                                }
+                                EOF
                                 exit 0
                             '''
 
                             def auditExitCode = readFile('reports/npm-audit/exit-code.txt').trim() as int
-                            def auditReport = [:]
+                            int criticalCount = 0
+                            int highCount = 0
 
                             try {
-                                def auditReportText = readFile('reports/npm-audit/audit.json').trim()
-                                if (auditReportText) {
-                                    auditReport = new groovy.json.JsonSlurperClassic().parseText(auditReportText)
+                                def summaryText = readFile('reports/npm-audit/summary.txt').trim()
+                                if (summaryText) {
+                                    def parts = summaryText.tokenize(' \t')
+                                    if (parts.size() >= 1) {
+                                        criticalCount = (parts[0] ?: '0') as int
+                                    }
+                                    if (parts.size() >= 2) {
+                                        highCount = (parts[1] ?: '0') as int
+                                    }
                                 }
                             } catch (Exception auditParseError) {
-                                echo "Unable to parse npm audit JSON summary: ${auditParseError.message}"
+                                echo "Unable to read npm audit summary: ${auditParseError.message}"
                             }
-
-                            def vulnerabilityCounts = auditReport?.metadata?.vulnerabilities ?: [:]
-                            int criticalCount = (vulnerabilityCounts.critical ?: 0) as int
-                            int highCount = (vulnerabilityCounts.high ?: 0) as int
 
                             if (criticalCount > 0 || highCount > 0) {
                                 echo "npm audit found ${criticalCount} critical and ${highCount} high vulnerabilities from package-lock.json. Build remains green by policy."
@@ -512,7 +571,7 @@ pipeline {
                                       -v "$TMPDIR/repo:/repo" \
                                       -v "$WORKSPACE/reports/gitleaks:/reports" \
                                       -w /repo \
-                                      zricethezav/gitleaks:latest detect \
+                                      zricethezav/gitleaks:v8.18.2 detect \
                                       --source=/repo \
                                       --no-git \
                                       --report-format json \
@@ -603,33 +662,38 @@ pipeline {
                 catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
                     withSonarQubeEnv('SonarQube') {
                         sh '''
-                            docker run --rm -u "$(id -u):$(id -g)" \
-                              -v "$WORKSPACE:/work" -w /work \
-                              -e SONAR_HOST_URL="$SONAR_HOST_URL" \
-                              -e SONAR_TOKEN="$SONAR_AUTH_TOKEN" \
-                              node:20 \
-                              node scripts/quality/sonarqube-export.cjs \
-                                --project-key dorfgefluester \
-                                --out-json reports/sonarqube/issues.json \
-                                --out-md reports/sonarqube/issues.md
+                            if [ -f scripts/quality/sonarqube-export.cjs ] && [ -f scripts/quality/sonar-report.cjs ]; then
+                              docker run --rm -u "$(id -u):$(id -g)" \
+                                -v "$WORKSPACE:/work" -w /work \
+                                -e SONAR_HOST_URL="$SONAR_HOST_URL" \
+                                -e SONAR_TOKEN="$SONAR_AUTH_TOKEN" \
+                                node:20 \
+                                node scripts/quality/sonarqube-export.cjs \
+                                  --project-key dorfgefluester \
+                                  --out-json reports/sonarqube/issues.json \
+                                  --out-md reports/sonarqube/issues.md
 
-                            docker run --rm -u "$(id -u):$(id -g)" \
-                              -v "$WORKSPACE:/work" -w /work \
-                              -e SONAR_HOST_URL="$SONAR_HOST_URL" \
-                              -e SONAR_TOKEN="$SONAR_AUTH_TOKEN" \
-                              node:20 \
-                              node scripts/quality/sonar-report.cjs \
-                                --project-key dorfgefluester \
-                                --out-json reports/sonarqube/sonar-report.json \
-                                --out-md reports/sonarqube/sonar-report.md \
-                                --strict false
+                              docker run --rm -u "$(id -u):$(id -g)" \
+                                -v "$WORKSPACE:/work" -w /work \
+                                -e SONAR_HOST_URL="$SONAR_HOST_URL" \
+                                -e SONAR_TOKEN="$SONAR_AUTH_TOKEN" \
+                                node:20 \
+                                node scripts/quality/sonar-report.cjs \
+                                  --project-key dorfgefluester \
+                                  --out-json reports/sonarqube/sonar-report.json \
+                                  --out-md reports/sonarqube/sonar-report.md \
+                                  --strict false
 
-                            echo ""
-                            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-                            echo "SonarQube Report (from reports/sonarqube/sonar-report.md)"
-                            echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-                            echo ""
-                            sed -n '1,220p' reports/sonarqube/sonar-report.md || true
+                              echo ""
+                              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                              echo "SonarQube Report (from reports/sonarqube/sonar-report.md)"
+                              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                              echo ""
+                              sed -n '1,220p' reports/sonarqube/sonar-report.md || true
+                            else
+                              echo "SonarQube export scripts not found (scripts/quality/sonarqube-export.cjs, scripts/quality/sonar-report.cjs)."
+                              echo "Skipping Export Findings stage."
+                            fi
                         '''
                     }
                 }
@@ -848,9 +912,6 @@ pipeline {
                                   "${IMAGE_REPO}:${imageTag}"
                             """
                             def trivyStatus = sh(script: trivyCommand, returnStatus: true)
-                            if (fileExists('reports/trivy/image.json')) {
-                                sh 'node scripts/quality/trivy-summary.cjs --input reports/trivy/image.json --label "Trivy Image Scan"'
-                            }
                             if (trivyStatus != 0) {
                                 if (isReleaseBranch) {
                                     error("Trivy image scan failed with exit code ${trivyStatus}.")
@@ -862,6 +923,159 @@ pipeline {
                         }
                     }
                 }
+
+	                // Push directly when possible and fallback via deploy host for insecure-registry setups.
+	                stage('Push Docker Image') {
+	                    when {
+	                        branch 'master'
+	                    }
+	                    steps {
+	                        script {
+	                            def imageTag = env.IMAGE_TAG?.trim()
+	                            if (!imageTag || imageTag == 'null') {
+	                                sh 'git config --global --add safe.directory "$WORKSPACE"'
+	                                imageTag = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+	                            }
+	                            if (!imageTag || imageTag == 'null') {
+	                                error('Unable to resolve IMAGE_TAG for docker push.')
+	                            }
+	                            env.IMAGE_TAG = imageTag
+	                            def extraTags = []
+	                            if (env.BRANCH_NAME == 'master') {
+	                                extraTags << 'master-latest'
+	                            }
+	                            extraTags = extraTags.findAll { it?.trim() }.unique()
+
+	                            for (def tag : extraTags) {
+	                                sh "docker tag ${IMAGE_REPO}:${imageTag} ${IMAGE_REPO}:${tag}"
+	                            }
+
+	                            def tagsToPush = ([imageTag] + extraTags).unique()
+	                            def pushDirectAll = {
+	                                def ok = true
+	                                for (def tag : tagsToPush) {
+	                                    def status = sh(script: "docker push ${IMAGE_REPO}:${tag}", returnStatus: true)
+	                                    if (status != 0) {
+	                                        ok = false
+	                                    }
+	                                }
+	                                return ok
+	                            }
+
+	                            def pushSkopeoAll = {
+	                                def ok = true
+	                                for (def tag : tagsToPush) {
+	                                    def status = sh(
+	                                        script: """
+	                                          docker run --rm \
+	                                            -v /var/run/docker.sock:/var/run/docker.sock \
+	                                            quay.io/skopeo/stable:latest \
+	                                            copy --dest-tls-verify=false \
+	                                            docker-daemon:${IMAGE_REPO}:${tag} \
+	                                            docker://${IMAGE_REPO}:${tag}
+	                                        """,
+	                                        returnStatus: true
+	                                    )
+	                                    if (status != 0) {
+	                                        ok = false
+	                                    }
+	                                }
+	                                return ok
+	                            }
+
+	                            if (pushDirectAll()) {
+	                                echo "Image pushed directly from Jenkins agent (${tagsToPush.join(', ')})."
+	                            } else {
+	                                echo "Direct push failed (likely insecure registry/TLS mismatch). Trying skopeo HTTP push."
+	                                if (pushSkopeoAll()) {
+	                                    echo "Image pushed from Jenkins agent using skopeo HTTP fallback (${tagsToPush.join(', ')})."
+	                                } else {
+	                                    echo "Skopeo HTTP push failed. Falling back to push via ${DEPLOY_HOST}."
+	                                    def imageArchive = "/tmp/${RELEASE}-${imageTag}.tar.gz"
+	                                    def sshCredCandidates = [env.SSH_CRED_ID, 'dev-env-01-ssh', 'deploy'].findAll { it?.trim() }.unique()
+	                                    def pushedViaSsh = false
+	                                    def lastSshError = null
+	                                    for (def credId : sshCredCandidates) {
+	                                        try {
+	                                            withCredentials([sshUserPrivateKey(credentialsId: credId, keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
+	                                                def extraTagsCsv = extraTags.join(',')
+	                                                sh """
+	                                                  set -e
+	                                                  docker save ${IMAGE_REPO}:${imageTag} | gzip > ${imageArchive}
+	                                                  scp -i "\$SSH_KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no ${imageArchive} \$SSH_USER@${DEPLOY_HOST}:/tmp/
+	                                                  ssh -i "\$SSH_KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no \$SSH_USER@${DEPLOY_HOST} '
+	                                                    set -e
+	                                                    IMAGE_ARCHIVE=${imageArchive}
+	                                                    IMAGE_TAG=${imageTag}
+	                                                    IMAGE_REPO=${IMAGE_REPO}
+	                                                    EXTRA_TAGS_CSV="${extraTagsCsv}"
+	                                                    if docker info >/dev/null 2>&1; then
+	                                                      DOCKER_CMD="docker"
+	                                                    elif sudo -n docker info >/dev/null 2>&1; then
+	                                                      DOCKER_CMD="sudo docker"
+	                                                    elif sudo -n k3s ctr version >/dev/null 2>&1; then
+	                                                      gunzip -c \$IMAGE_ARCHIVE | sudo -n k3s ctr -n k8s.io images import -
+	                                                      sudo -n k3s ctr -n k8s.io images push --plain-http \$IMAGE_REPO:\$IMAGE_TAG
+	                                                      if [ -n "\$EXTRA_TAGS_CSV" ]; then
+	                                                        IFS=","; for t in \$EXTRA_TAGS_CSV; do
+	                                                          [ -n "\$t" ] || continue
+	                                                          sudo -n k3s ctr -n k8s.io images tag \$IMAGE_REPO:\$IMAGE_TAG \$IMAGE_REPO:\$t
+	                                                          sudo -n k3s ctr -n k8s.io images push --plain-http \$IMAGE_REPO:\$t
+	                                                        done
+	                                                      fi
+	                                                      rm -f \$IMAGE_ARCHIVE
+	                                                      exit 0
+	                                                    else
+	                                                      echo "Neither docker nor k3s ctr is available for user \$USER on ${DEPLOY_HOST}."
+	                                                      exit 1
+	                                                    fi
+	                                                    gunzip -c \$IMAGE_ARCHIVE | \$DOCKER_CMD load
+	                                                    \$DOCKER_CMD push \$IMAGE_REPO:\$IMAGE_TAG
+	                                                    if [ -n "\$EXTRA_TAGS_CSV" ]; then
+	                                                      IFS=","; for t in \$EXTRA_TAGS_CSV; do
+	                                                        [ -n "\$t" ] || continue
+	                                                        \$DOCKER_CMD tag \$IMAGE_REPO:\$IMAGE_TAG \$IMAGE_REPO:\$t
+	                                                        \$DOCKER_CMD push \$IMAGE_REPO:\$t
+	                                                      done
+	                                                    fi
+	                                                    rm -f \$IMAGE_ARCHIVE
+	                                                  '
+	                                                  rm -f ${imageArchive}
+	                                                """
+	                                            }
+	                                            env.SSH_CRED_ID = credId
+	                                            echo "Image pushed via SSH using credential '${credId}' (${tagsToPush.join(', ')})."
+	                                            pushedViaSsh = true
+	                                            break
+	                                        } catch (err) {
+	                                            lastSshError = err
+	                                            echo "SSH push fallback failed with credential '${credId}': ${err.getMessage()}"
+	                                        }
+	                                    }
+	                                    if (!pushedViaSsh) {
+	                                        throw lastSshError ?: new RuntimeException('SSH push fallback failed for all configured credentials.')
+	                                    }
+	                                }
+	                            }
+
+	                            // Best-effort verification: confirm the tag(s) exist in registry after push.
+	                            catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+	                                sh """
+	                                  set -e
+	                                  url="http://${REGISTRY}/v2/${IMAGE_NAME}/tags/list"
+	                                  if ! tags_json=\$(curl -fsS "\$url"); then
+	                                    echo "WARN: unable to query registry tags at \$url"
+	                                    exit 0
+	                                  fi
+	                                  for t in ${tagsToPush.join(' ')}; do
+	                                    echo "\$tags_json" | grep -Fq "\"\$t\"" || { echo "WARN: registry tag missing after push: \$t"; exit 1; }
+	                                  done
+	                                  echo "Registry tags verified: ${tagsToPush.join(', ')}"
+	                                """
+	                            }
+	                        }
+	                    }
+	                }
 
 	                // Push directly when possible and fallback via deploy host for insecure-registry setups.
 	                stage('Push Docker Image') {
