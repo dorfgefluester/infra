@@ -363,7 +363,7 @@ pipeline {
                         sh "${dockerRunBase} 'npx playwright --version'"
 
                         if (runHappyPath) {
-                            sh "${dockerRunBase} 'npx playwright test tests/e2e/smoke/user-click-paths.spec.js --project=smoke-chromium --grep \"returning player can complete key HUD interactions via click path\"'"
+                            sh "${dockerRunBase} 'npx playwright test tests/e2e/smoke/user-click-paths.spec.js --project=smoke-chromium --grep \"should open settings modal\"'"
                             sh "${dockerRunBase} 'npx playwright test tests/e2e/regression/accessibility.spec.js --project=regression-chromium'"
                         }
 
