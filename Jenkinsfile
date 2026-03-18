@@ -1077,6 +1077,161 @@ pipeline {
 	                    }
 	                }
 
+	                // Push directly when possible and fallback via deploy host for insecure-registry setups.
+	                stage('Push Docker Image') {
+	                    when {
+	                        branch 'master'
+	                    }
+	                    steps {
+	                        script {
+	                            def imageTag = env.IMAGE_TAG?.trim()
+	                            if (!imageTag || imageTag == 'null') {
+	                                sh 'git config --global --add safe.directory "$WORKSPACE"'
+	                                imageTag = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+	                            }
+	                            if (!imageTag || imageTag == 'null') {
+	                                error('Unable to resolve IMAGE_TAG for docker push.')
+	                            }
+	                            env.IMAGE_TAG = imageTag
+	                            def extraTags = []
+	                            if (env.BRANCH_NAME == 'master') {
+	                                extraTags << 'master-latest'
+	                            } else if (env.BRANCH_NAME == 'staging') {
+	                                extraTags << 'staging-latest'
+	                            }
+	                            extraTags = extraTags.findAll { it?.trim() }.unique()
+
+	                            for (def tag : extraTags) {
+	                                sh "docker tag ${IMAGE_REPO}:${imageTag} ${IMAGE_REPO}:${tag}"
+	                            }
+
+	                            def tagsToPush = ([imageTag] + extraTags).unique()
+	                            def pushDirectAll = {
+	                                def ok = true
+	                                for (def tag : tagsToPush) {
+	                                    def status = sh(script: "docker push ${IMAGE_REPO}:${tag}", returnStatus: true)
+	                                    if (status != 0) {
+	                                        ok = false
+	                                    }
+	                                }
+	                                return ok
+	                            }
+
+	                            def pushSkopeoAll = {
+	                                def ok = true
+	                                for (def tag : tagsToPush) {
+	                                    def status = sh(
+	                                        script: """
+	                                          docker run --rm \
+	                                            -v /var/run/docker.sock:/var/run/docker.sock \
+	                                            quay.io/skopeo/stable:latest \
+	                                            copy --dest-tls-verify=false \
+	                                            docker-daemon:${IMAGE_REPO}:${tag} \
+	                                            docker://${IMAGE_REPO}:${tag}
+	                                        """,
+	                                        returnStatus: true
+	                                    )
+	                                    if (status != 0) {
+	                                        ok = false
+	                                    }
+	                                }
+	                                return ok
+	                            }
+
+	                            if (pushDirectAll()) {
+	                                echo "Image pushed directly from Jenkins agent (${tagsToPush.join(', ')})."
+	                            } else {
+	                                echo "Direct push failed (likely insecure registry/TLS mismatch). Trying skopeo HTTP push."
+	                                if (pushSkopeoAll()) {
+	                                    echo "Image pushed from Jenkins agent using skopeo HTTP fallback (${tagsToPush.join(', ')})."
+	                                } else {
+	                                    echo "Skopeo HTTP push failed. Falling back to push via ${DEPLOY_HOST}."
+	                                    def imageArchive = "/tmp/${RELEASE}-${imageTag}.tar.gz"
+	                                    def sshCredCandidates = [env.SSH_CRED_ID, 'dev-env-01-ssh', 'deploy'].findAll { it?.trim() }.unique()
+	                                    def pushedViaSsh = false
+	                                    def lastSshError = null
+	                                    for (def credId : sshCredCandidates) {
+	                                        try {
+	                                            withCredentials([sshUserPrivateKey(credentialsId: credId, keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
+	                                                def extraTagsCsv = extraTags.join(',')
+	                                                sh """
+	                                                  set -e
+	                                                  docker save ${IMAGE_REPO}:${imageTag} | gzip > ${imageArchive}
+	                                                  scp -i "\$SSH_KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no ${imageArchive} \$SSH_USER@${DEPLOY_HOST}:/tmp/
+	                                                  ssh -i "\$SSH_KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no \$SSH_USER@${DEPLOY_HOST} '
+	                                                    set -e
+	                                                    IMAGE_ARCHIVE=${imageArchive}
+	                                                    IMAGE_TAG=${imageTag}
+	                                                    IMAGE_REPO=${IMAGE_REPO}
+	                                                    EXTRA_TAGS_CSV="${extraTagsCsv}"
+	                                                    if docker info >/dev/null 2>&1; then
+	                                                      DOCKER_CMD="docker"
+	                                                    elif sudo -n docker info >/dev/null 2>&1; then
+	                                                      DOCKER_CMD="sudo docker"
+	                                                    elif sudo -n k3s ctr version >/dev/null 2>&1; then
+	                                                      gunzip -c \$IMAGE_ARCHIVE | sudo -n k3s ctr -n k8s.io images import -
+	                                                      sudo -n k3s ctr -n k8s.io images push --plain-http \$IMAGE_REPO:\$IMAGE_TAG
+	                                                      if [ -n "\$EXTRA_TAGS_CSV" ]; then
+	                                                        IFS=","; for t in \$EXTRA_TAGS_CSV; do
+	                                                          [ -n "\$t" ] || continue
+	                                                          sudo -n k3s ctr -n k8s.io images tag \$IMAGE_REPO:\$IMAGE_TAG \$IMAGE_REPO:\$t
+	                                                          sudo -n k3s ctr -n k8s.io images push --plain-http \$IMAGE_REPO:\$t
+	                                                        done
+	                                                      fi
+	                                                      rm -f \$IMAGE_ARCHIVE
+	                                                      exit 0
+	                                                    else
+	                                                      echo "Neither docker nor k3s ctr is available for user \$USER on ${DEPLOY_HOST}."
+	                                                      exit 1
+	                                                    fi
+	                                                    gunzip -c \$IMAGE_ARCHIVE | \$DOCKER_CMD load
+	                                                    \$DOCKER_CMD push \$IMAGE_REPO:\$IMAGE_TAG
+	                                                    if [ -n "\$EXTRA_TAGS_CSV" ]; then
+	                                                      IFS=","; for t in \$EXTRA_TAGS_CSV; do
+	                                                        [ -n "\$t" ] || continue
+	                                                        \$DOCKER_CMD tag \$IMAGE_REPO:\$IMAGE_TAG \$IMAGE_REPO:\$t
+	                                                        \$DOCKER_CMD push \$IMAGE_REPO:\$t
+	                                                      done
+	                                                    fi
+	                                                    rm -f \$IMAGE_ARCHIVE
+	                                                  '
+	                                                  rm -f ${imageArchive}
+	                                                """
+	                                            }
+	                                            env.SSH_CRED_ID = credId
+	                                            echo "Image pushed via SSH using credential '${credId}' (${tagsToPush.join(', ')})."
+	                                            pushedViaSsh = true
+	                                            break
+	                                        } catch (err) {
+	                                            lastSshError = err
+	                                            echo "SSH push fallback failed with credential '${credId}': ${err.getMessage()}"
+	                                        }
+	                                    }
+	                                    if (!pushedViaSsh) {
+	                                        throw lastSshError ?: new RuntimeException('SSH push fallback failed for all configured credentials.')
+	                                    }
+	                                }
+	                            }
+
+	                            // Best-effort verification: confirm the tag(s) exist in registry after push.
+	                            catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+	                                sh """
+	                                  set -e
+	                                  url="http://${REGISTRY}/v2/${IMAGE_NAME}/tags/list"
+	                                  if ! tags_json=\$(curl -fsS "\$url"); then
+	                                    echo "WARN: unable to query registry tags at \$url"
+	                                    exit 0
+	                                  fi
+	                                  for t in ${tagsToPush.join(' ')}; do
+	                                    echo "\$tags_json" | grep -Fq "\"\$t\"" || { echo "WARN: registry tag missing after push: \$t"; exit 1; }
+	                                  done
+	                                  echo "Registry tags verified: ${tagsToPush.join(', ')}"
+	                                """
+	                            }
+	                        }
+	                    }
+	                }
+
                 // Archive build metadata so downstream deploy jobs can consume image details reliably.
                 stage('Archive Build Metadata') {
                     steps {
