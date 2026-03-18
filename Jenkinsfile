@@ -943,8 +943,6 @@ pipeline {
 	                            def extraTags = []
 	                            if (env.BRANCH_NAME == 'master') {
 	                                extraTags << 'master-latest'
-	                            } else if (env.BRANCH_NAME == 'staging') {
-	                                extraTags << 'staging-latest'
 	                            }
 	                            extraTags = extraTags.findAll { it?.trim() }.unique()
 
