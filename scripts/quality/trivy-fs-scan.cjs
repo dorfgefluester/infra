@@ -1,6 +1,5 @@
 const { spawnSync } = require('child_process');
 const path = require('path');
-const { fileURLToPath, pathToFileURL } = require('url');
 
 const { parseArgs } = require('./cli-args.cjs');
 const { ensureDirForFile, readJson, writeText } = require('./fs-utils.cjs');
@@ -344,10 +343,7 @@ function assertPathInsideCwd(inputPath, label, { allowCwd = false } = {}) {
   }
 
   const cwd = process.cwd();
-  const cwdUrl = pathToFileURL(cwd.endsWith(path.sep) ? cwd : `${cwd}${path.sep}`);
-  const relativeUrlPath = pathSegments.length === 0 ? './' : pathSegments.map(encodeURIComponent).join('/');
-
-  const resolvedPath = path.normalize(fileURLToPath(new URL(relativeUrlPath, cwdUrl)));
+  const resolvedPath = path.resolve(cwd, normalizedPath);
 
   return pathSegments.length === 0 ? cwd : resolvedPath;
 }
