@@ -120,17 +120,13 @@ pipeline {
             }
         }
 
-        // Run compile, lint, tests, and optional E2E in a Node 20 container for parity across projects.
+        // Run compile, lint, tests, and optional E2E directly on the Jenkins agent.
+        // The nested docker agent wrapper has been unstable on these workers: once the remoting
+        // channel flaps, Jenkins frequently cannot reconnect to or tear down the CI container and
+        // the build hangs until the global timeout expires.
         stage('CI') {
             when {
                 expression { return env.BUILD_ALLOWED == 'true' }
-            }
-            agent {
-                docker {
-                    image "node:${NODE_VERSION}"
-                    args "--entrypoint=''"
-                    reuseNode true
-                }
             }
             stages {
                 // Perform a resilient checkout and set a deterministic image tag from git SHA.
