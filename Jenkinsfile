@@ -38,7 +38,7 @@ pipeline {
         TRIVY_FS_CACHE_DIR = "${JOB_CACHE_DIR}/trivy-fs"
         TRIVY_IMAGE_CACHE_DIR = "${JOB_CACHE_DIR}/trivy-image"
         DOCKER_BUILDX_CACHE_DIR = "${JOB_CACHE_DIR}/docker-buildx"
-        DEPENDENCY_TRACK_URL = 'http://docker-prod:8081'
+        DEPENDENCY_TRACK_URL = 'http://docker-prod:8080'
         DEPENDENCY_TRACK_PROJECT = '344a6e91-7644-45c7-befd-1bbe2d3622c4'
     }
 
