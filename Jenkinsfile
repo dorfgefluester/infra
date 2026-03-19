@@ -501,8 +501,10 @@ EOF
 
                             withCredentials([string(credentialsId: 'dependency-track-api-key', variable: 'DT_API_KEY')]) {
                                 sh '''
+                                    test -f package.json
+                                    test -f package-lock.json
                                     mkdir -p reports/dependency-track
-                                    rm -f reports/dependency-track/sbom.json
+                                    rm -f reports/dependency-track/sbom.json reports/dependency-track/bom-put.json
 
                                     docker run --rm \
                                       -u "$(id -u):$(id -g)" \
@@ -512,11 +514,29 @@ EOF
                                       node:20-slim \
                                       npx --yes @cyclonedx/cyclonedx-npm --package-lock-only --output-file reports/dependency-track/sbom.json
 
+                                    test -s reports/dependency-track/sbom.json
+
+                                    node <<'EOF'
+const fs = require('fs');
+
+const sbom = fs.readFileSync('reports/dependency-track/sbom.json');
+const payload = {
+  project: process.env.DEPENDENCY_TRACK_PROJECT,
+  bom: sbom.toString('base64'),
+};
+
+fs.writeFileSync(
+  'reports/dependency-track/bom-put.json',
+  JSON.stringify(payload),
+  'utf8',
+);
+EOF
+
                                     RESPONSE=$(curl -sS -o /tmp/dependency-track-response.txt -w "%{http_code}" \
-                                      -X POST "${DEPENDENCY_TRACK_URL}/api/v1/bom" \
+                                      -X PUT "${DEPENDENCY_TRACK_URL}/api/v1/bom" \
                                       -H "X-Api-Key: ${DT_API_KEY}" \
-                                      -F "project=${DEPENDENCY_TRACK_PROJECT}" \
-                                      -F "bom=@reports/dependency-track/sbom.json")
+                                      -H "Content-Type: application/json" \
+                                      --data-binary @reports/dependency-track/bom-put.json)
 
                                     echo "Dependency-Track upload HTTP status: ${RESPONSE}"
                                     if [ "${RESPONSE}" != "200" ] && [ "${RESPONSE}" != "201" ]; then
