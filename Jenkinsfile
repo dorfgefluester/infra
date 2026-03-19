@@ -419,45 +419,47 @@ pipeline {
                               --format json --output /src/reports/trivy/fs.json \
                               --exit-code 0 --severity HIGH,CRITICAL --ignore-unfixed || true
                         '''
-                        sh '''
-                            node << 'EOF'
-                            const fs = require('fs');
+                        sh(
+                            script: '''
+node <<'EOF'
+const fs = require('fs');
 
-                            const inputPath = 'reports/trivy/fs.json';
-                            const label = 'Trivy FS Scan';
+const inputPath = 'reports/trivy/fs.json';
+const label = 'Trivy FS Scan';
 
-                            function summarizeTrivyFs(path) {
-                              try {
-                                const raw = fs.readFileSync(path, 'utf8');
-                                const data = JSON.parse(raw);
+function summarizeTrivyFs(path) {
+  try {
+    const raw = fs.readFileSync(path, 'utf8');
+    const data = JSON.parse(raw);
 
-                                const results = Array.isArray(data.Results) ? data.Results : [];
-                                let high = 0;
-                                let critical = 0;
+    const results = Array.isArray(data.Results) ? data.Results : [];
+    let high = 0;
+    let critical = 0;
 
-                                for (const result of results) {
-                                  const vulns = Array.isArray(result.Vulnerabilities) ? result.Vulnerabilities : [];
-                                  for (const v of vulns) {
-                                    if (v.Severity === 'HIGH') {
-                                      high++;
-                                    } else if (v.Severity === 'CRITICAL') {
-                                      critical++;
-                                    }
-                                  }
-                                }
+    for (const result of results) {
+      const vulns = Array.isArray(result.Vulnerabilities) ? result.Vulnerabilities : [];
+      for (const v of vulns) {
+        if (v.Severity === 'HIGH') {
+          high++;
+        } else if (v.Severity === 'CRITICAL') {
+          critical++;
+        }
+      }
+    }
 
-                                console.log(`=== ${label} summary ===`);
-                                console.log(`HIGH vulnerabilities: ${high}`);
-                                console.log(`CRITICAL vulnerabilities: ${critical}`);
-                              } catch (err) {
-                                console.log(`=== ${label} summary ===`);
-                                console.log(`Unable to read or parse ${path}: ${err.message}`);
-                              }
-                            }
+    console.log(`=== ${label} summary ===`);
+    console.log(`HIGH vulnerabilities: ${high}`);
+    console.log(`CRITICAL vulnerabilities: ${critical}`);
+  } catch (err) {
+    console.log(`=== ${label} summary ===`);
+    console.log(`Unable to read or parse ${path}: ${err.message}`);
+  }
+}
 
-                            summarizeTrivyFs(inputPath);
-                            EOF
-                        '''
+summarizeTrivyFs(inputPath);
+EOF
+                            '''.stripIndent()
+                        )
                     }
                 }
                 // Run Semgrep SAST ruleset for fast pattern-based vulnerability detection.
@@ -487,34 +489,36 @@ pipeline {
                 stage('npm Audit') {
                     steps {
                         script {
-                            sh '''
-                                mkdir -p reports/npm-audit
-                                audit_status=0
-                                npm audit --json --package-lock-only > reports/npm-audit/audit.json || audit_status=$?
-                                printf '%s\n' "$audit_status" > reports/npm-audit/exit-code.txt
-                                node - <<'EOF'
-                                const fs = require('fs');
-                                let critical = 0;
-                                let high = 0;
-                                try {
-                                  const text = fs.readFileSync('reports/npm-audit/audit.json', 'utf8').trim();
-                                  if (text) {
-                                    const data = JSON.parse(text);
-                                    const v = (data && data.metadata && data.metadata.vulnerabilities) || {};
-                                    critical = Number.isFinite(v.critical) ? v.critical : 0;
-                                    high = Number.isFinite(v.high) ? v.high : 0;
-                                  }
-                                } catch (e) {
-                                  // leave critical/high as 0 on any error
-                                }
-                                try {
-                                  fs.writeFileSync('reports/npm-audit/summary.txt', critical + ' ' + high + '\\n', 'utf8');
-                                } catch (e) {
-                                  // if we can't write the summary, there is nothing more we can do here
-                                }
-                                EOF
-                                exit 0
-                            '''
+                            sh(
+                                script: '''
+mkdir -p reports/npm-audit
+audit_status=0
+npm audit --json --package-lock-only > reports/npm-audit/audit.json || audit_status=$?
+printf '%s\n' "$audit_status" > reports/npm-audit/exit-code.txt
+node - <<'EOF'
+const fs = require('fs');
+let critical = 0;
+let high = 0;
+try {
+  const text = fs.readFileSync('reports/npm-audit/audit.json', 'utf8').trim();
+  if (text) {
+    const data = JSON.parse(text);
+    const v = (data && data.metadata && data.metadata.vulnerabilities) || {};
+    critical = Number.isFinite(v.critical) ? v.critical : 0;
+    high = Number.isFinite(v.high) ? v.high : 0;
+  }
+} catch (e) {
+  // leave critical/high as 0 on any error
+}
+try {
+  fs.writeFileSync('reports/npm-audit/summary.txt', critical + ' ' + high + '\\n', 'utf8');
+} catch (e) {
+  // if we can't write the summary, there is nothing more we can do here
+}
+EOF
+exit 0
+                                '''.stripIndent()
+                            )
 
                             def auditExitCode = readFile('reports/npm-audit/exit-code.txt').trim() as int
                             int criticalCount = 0
