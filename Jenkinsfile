@@ -38,6 +38,8 @@ pipeline {
         TRIVY_FS_CACHE_DIR = "${JOB_CACHE_DIR}/trivy-fs"
         TRIVY_IMAGE_CACHE_DIR = "${JOB_CACHE_DIR}/trivy-image"
         DOCKER_BUILDX_CACHE_DIR = "${JOB_CACHE_DIR}/docker-buildx"
+        DEPENDENCY_TRACK_URL = 'http://docker-prod:8081'
+        DEPENDENCY_TRACK_PROJECT = '344a6e91-7644-45c7-befd-1bbe2d3622c4'
     }
 
     stages {
@@ -482,6 +484,54 @@ EOF
                                     echo "Semgrep reported findings or returned exit code ${semgrepStatus}. Review the log output above; build remains green by policy."
                                 }
                             }
+                        }
+                    }
+                }
+                // Generate a CycloneDX SBOM and upload it to Dependency-Track for non-blocking SCA.
+                stage('Dependency-Track SBOM') {
+                    agent { label 'linux-docker' }
+                    steps {
+                        catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                            script {
+                                if (!env.DEPENDENCY_TRACK_URL?.trim() || !env.DEPENDENCY_TRACK_PROJECT?.trim()) {
+                                    echo 'Dependency-Track SBOM skipped: DEPENDENCY_TRACK_URL or DEPENDENCY_TRACK_PROJECT is not configured.'
+                                    return
+                                }
+                            }
+
+                            withCredentials([string(credentialsId: 'dependency-track-api-key', variable: 'DT_API_KEY')]) {
+                                sh '''
+                                    mkdir -p reports/dependency-track
+                                    rm -f reports/dependency-track/sbom.json
+
+                                    docker run --rm \
+                                      -u "$(id -u):$(id -g)" \
+                                      -v "$WORKSPACE:/app" \
+                                      -w /app \
+                                      node:20-slim \
+                                      bash -lc "npm install -g @cyclonedx/cyclonedx-npm --quiet >/dev/null 2>&1 && cyclonedx-npm --package-lock-only --output-file reports/dependency-track/sbom.json"
+
+                                    RESPONSE=$(curl -sS -o /tmp/dependency-track-response.txt -w "%{http_code}" \
+                                      -X POST "${DEPENDENCY_TRACK_URL}/api/v1/bom" \
+                                      -H "X-Api-Key: ${DT_API_KEY}" \
+                                      -F "project=${DEPENDENCY_TRACK_PROJECT}" \
+                                      -F "bom=@reports/dependency-track/sbom.json")
+
+                                    echo "Dependency-Track upload HTTP status: ${RESPONSE}"
+                                    if [ "${RESPONSE}" != "200" ] && [ "${RESPONSE}" != "201" ]; then
+                                      echo 'Dependency-Track upload failed. Response body:'
+                                      cat /tmp/dependency-track-response.txt || true
+                                      exit 1
+                                    fi
+
+                                    echo "Dependency-Track SBOM uploaded successfully"
+                                '''
+                            }
+                        }
+                    }
+                    post {
+                        always {
+                            archiveArtifacts artifacts: 'reports/dependency-track/sbom.json', allowEmptyArchive: true
                         }
                     }
                 }
