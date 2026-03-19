@@ -489,7 +489,6 @@ EOF
                 }
                 // Generate a CycloneDX SBOM and upload it to Dependency-Track for non-blocking SCA.
                 stage('Dependency-Track SBOM') {
-                    agent { label 'linux-docker' }
                     steps {
                         catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
                             script {
