@@ -544,6 +544,92 @@ EOF
                                       exit 1
                                     fi
 
+                                    echo 'Dependency-Track upload response body:'
+                                    cat /tmp/dependency-track-response.txt || true
+
+                                    BOM_TOKEN=$(node <<'EOF'
+const fs = require('fs');
+
+try {
+  const raw = fs.readFileSync('/tmp/dependency-track-response.txt', 'utf8').trim();
+  if (!raw) {
+    process.exit(0);
+  }
+
+  const data = JSON.parse(raw);
+  const token = typeof data.token === 'string' ? data.token.trim() : '';
+  if (token) {
+    process.stdout.write(token);
+  }
+} catch (error) {
+  // Keep token empty if the response body is not JSON or lacks a token.
+}
+EOF
+                                    )
+
+                                    if [ -n "${BOM_TOKEN}" ]; then
+                                      echo "Dependency-Track BOM processing token: ${BOM_TOKEN}"
+                                      DT_STATUS=""
+                                      for attempt in 1 2 3 4 5 6 7 8 9 10; do
+                                        STATUS_CODE=$(curl -sS -o /tmp/dependency-track-token.txt -w "%{http_code}" \
+                                          -H "X-Api-Key: ${DT_API_KEY}" \
+                                          "${DEPENDENCY_TRACK_URL}/api/v1/bom/token/${BOM_TOKEN}")
+
+                                        echo "Dependency-Track token poll ${attempt} HTTP status: ${STATUS_CODE}"
+                                        if [ "${STATUS_CODE}" != "200" ]; then
+                                          echo 'Dependency-Track token poll failed. Response body:'
+                                          cat /tmp/dependency-track-token.txt || true
+                                          exit 1
+                                        fi
+
+                                        echo "Dependency-Track token poll ${attempt} response body:"
+                                        cat /tmp/dependency-track-token.txt || true
+
+                                        DT_STATUS=$(node <<'EOF'
+const fs = require('fs');
+
+try {
+  const raw = fs.readFileSync('/tmp/dependency-track-token.txt', 'utf8').trim();
+  if (!raw) {
+    process.exit(0);
+  }
+
+  const data = JSON.parse(raw);
+  const status = typeof data.processing === 'boolean'
+    ? (data.processing ? 'PROCESSING' : 'PROCESSED')
+    : typeof data.status === 'string'
+      ? data.status.trim().toUpperCase()
+      : '';
+  if (status) {
+    process.stdout.write(status);
+  }
+} catch (error) {
+  // Keep status empty if the response body is not JSON or lacks a status shape we know.
+}
+EOF
+                                        )
+
+                                        if [ "${DT_STATUS}" = "PROCESSED" ] || [ "${DT_STATUS}" = "COMPLETE" ] || [ "${DT_STATUS}" = "COMPLETED" ]; then
+                                          echo "Dependency-Track BOM processing completed with status: ${DT_STATUS}"
+                                          break
+                                        fi
+
+                                        if [ "${DT_STATUS}" = "FAILED" ] || [ "${DT_STATUS}" = "ERROR" ]; then
+                                          echo "Dependency-Track BOM processing failed with status: ${DT_STATUS}"
+                                          exit 1
+                                        fi
+
+                                        sleep 3
+                                      done
+
+                                      if [ "${DT_STATUS}" != "PROCESSED" ] && [ "${DT_STATUS}" != "COMPLETE" ] && [ "${DT_STATUS}" != "COMPLETED" ]; then
+                                        echo "Dependency-Track BOM processing did not reach a terminal success state. Last known status: ${DT_STATUS:-UNKNOWN}"
+                                        exit 1
+                                      fi
+                                    else
+                                      echo 'Dependency-Track upload response did not include a BOM token; skipping token polling.'
+                                    fi
+
                                     echo "Dependency-Track SBOM uploaded successfully"
                                 '''
                             }
