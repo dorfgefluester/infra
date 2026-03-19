@@ -510,7 +510,7 @@ EOF
                                       -w /app \
                                       -e HOME=/tmp \
                                       node:20-slim \
-                                      sh -lc "npx --yes @cyclonedx/cyclonedx-npm --package-lock-only --output-file reports/dependency-track/sbom.json"
+                                      npx --yes @cyclonedx/cyclonedx-npm --package-lock-only --output-file reports/dependency-track/sbom.json
 
                                     RESPONSE=$(curl -sS -o /tmp/dependency-track-response.txt -w "%{http_code}" \
                                       -X POST "${DEPENDENCY_TRACK_URL}/api/v1/bom" \
