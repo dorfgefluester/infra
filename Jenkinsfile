@@ -508,8 +508,9 @@ EOF
                                       -u "$(id -u):$(id -g)" \
                                       -v "$WORKSPACE:/app" \
                                       -w /app \
+                                      -e HOME=/tmp \
                                       node:20-slim \
-                                      bash -lc "npm install -g @cyclonedx/cyclonedx-npm --quiet >/dev/null 2>&1 && cyclonedx-npm --package-lock-only --output-file reports/dependency-track/sbom.json"
+                                      sh -lc "npx --yes @cyclonedx/cyclonedx-npm --package-lock-only --output-file reports/dependency-track/sbom.json"
 
                                     RESPONSE=$(curl -sS -o /tmp/dependency-track-response.txt -w "%{http_code}" \
                                       -X POST "${DEPENDENCY_TRACK_URL}/api/v1/bom" \
