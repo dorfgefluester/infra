@@ -530,6 +530,125 @@ EOF
                                     if [ "${RESPONSE}" != "200" ] && [ "${RESPONSE}" != "201" ]; then
                                       exit 1
                                     fi
+
+                                    LOOKUP_CODE=$(curl -sS -o /tmp/dependency-track-project.json -w "%{http_code}" \
+                                      -G "${DEPENDENCY_TRACK_URL}/api/v1/project/lookup" \
+                                      -H "X-Api-Key: ${DT_API_KEY}" \
+                                      --data-urlencode "name=${DEPENDENCY_TRACK_PROJECT_NAME}" \
+                                      --data-urlencode "version=${BRANCH_NAME}")
+
+                                    echo "Dependency-Track project lookup HTTP status: ${LOOKUP_CODE}"
+                                    cat /tmp/dependency-track-project.json | tee reports/dependency-track/project-lookup.json || true
+
+                                    if [ "${LOOKUP_CODE}" = "200" ]; then
+                                      PROJECT_UUID=$(node <<'EOF'
+const fs = require('fs');
+
+try {
+  const raw = fs.readFileSync('/tmp/dependency-track-project.json', 'utf8').trim();
+  if (!raw) {
+    process.exit(0);
+  }
+  const data = JSON.parse(raw);
+  const uuid = typeof data.uuid === 'string' ? data.uuid.trim() : '';
+  if (uuid) {
+    process.stdout.write(uuid);
+  }
+} catch (error) {
+  // Leave PROJECT_UUID empty if lookup JSON is missing or malformed.
+}
+EOF
+                                      )
+
+                                      if [ -n "${PROJECT_UUID}" ]; then
+                                        echo "Dependency-Track resolved project UUID: ${PROJECT_UUID}"
+
+                                        METRICS_CODE=$(curl -sS -o /tmp/dependency-track-metrics.json -w "%{http_code}" \
+                                          -H "X-Api-Key: ${DT_API_KEY}" \
+                                          "${DEPENDENCY_TRACK_URL}/api/v1/metrics/project/${PROJECT_UUID}/current")
+                                        echo "Dependency-Track metrics HTTP status: ${METRICS_CODE}"
+                                        cat /tmp/dependency-track-metrics.json | tee reports/dependency-track/metrics.json || true
+
+                                        FINDINGS_CODE=$(curl -sS -o /tmp/dependency-track-findings.json -w "%{http_code}" \
+                                          -H "X-Api-Key: ${DT_API_KEY}" \
+                                          "${DEPENDENCY_TRACK_URL}/api/v1/finding/project/${PROJECT_UUID}")
+                                        echo "Dependency-Track findings HTTP status: ${FINDINGS_CODE}"
+                                        cat /tmp/dependency-track-findings.json > reports/dependency-track/findings.json || true
+
+                                        node <<'EOF' | tee reports/dependency-track/summary.md
+const fs = require('fs');
+
+function readJson(path) {
+  try {
+    const raw = fs.readFileSync(path, 'utf8').trim();
+    return raw ? JSON.parse(raw) : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+const metrics = readJson('/tmp/dependency-track-metrics.json') || {};
+const findings = readJson('/tmp/dependency-track-findings.json');
+const findingList = Array.isArray(findings) ? findings : [];
+
+const severityCounts = findingList.reduce((acc, finding) => {
+  const severity = String(
+    finding?.vulnerability?.severity ||
+    finding?.severity ||
+    'UNASSIGNED',
+  ).toUpperCase();
+  acc[severity] = (acc[severity] || 0) + 1;
+  return acc;
+}, {});
+
+const topFindings = findingList
+  .slice()
+  .sort((a, b) => {
+    const scoreA = Number(a?.vulnerability?.cvssV3BaseScore ?? a?.vulnerability?.cvssV2BaseScore ?? 0);
+    const scoreB = Number(b?.vulnerability?.cvssV3BaseScore ?? b?.vulnerability?.cvssV2BaseScore ?? 0);
+    return scoreB - scoreA;
+  })
+  .slice(0, 10);
+
+const lines = [
+  '# Dependency-Track Summary',
+  '',
+  `- Project: dorfgefluester / ${process.env.BRANCH_NAME}`,
+  `- Components: ${metrics.components ?? 'n/a'}`,
+  `- Vulnerable components: ${metrics.vulnerableComponents ?? 'n/a'}`,
+  `- Findings: ${findingList.length}`,
+  `- Critical findings: ${severityCounts.CRITICAL || 0}`,
+  `- High findings: ${severityCounts.HIGH || 0}`,
+  `- Medium findings: ${severityCounts.MEDIUM || 0}`,
+  `- Low findings: ${severityCounts.LOW || 0}`,
+  '',
+  '## Top Findings',
+];
+
+if (topFindings.length === 0) {
+  lines.push('', '- No findings returned by Dependency-Track.');
+} else {
+  for (const finding of topFindings) {
+    const vulnId = finding?.vulnerability?.vulnId || finding?.vulnerability?.source || 'unknown-vuln';
+    const severity = String(finding?.vulnerability?.severity || finding?.severity || 'UNASSIGNED').toUpperCase();
+    const component = finding?.component?.name || finding?.component?.group || 'unknown-component';
+    const version = finding?.component?.version ? `@${finding.component.version}` : '';
+    const score = finding?.vulnerability?.cvssV3BaseScore ?? finding?.vulnerability?.cvssV2BaseScore ?? 'n/a';
+    lines.push(`- ${severity} ${vulnId} in ${component}${version} (CVSS ${score})`);
+  }
+}
+
+console.log(lines.join('\\n'));
+EOF
+
+                                        echo 'Dependency-Track summary:'
+                                        cat reports/dependency-track/summary.md || true
+                                      else
+                                        echo 'Dependency-Track project lookup returned no UUID; skipping findings summary.'
+                                      fi
+                                    else
+                                      echo 'Dependency-Track project lookup failed; skipping findings summary.'
+                                    fi
                                 '''
                             }
                         }
