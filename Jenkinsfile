@@ -39,7 +39,7 @@ pipeline {
         TRIVY_IMAGE_CACHE_DIR = "${JOB_CACHE_DIR}/trivy-image"
         DOCKER_BUILDX_CACHE_DIR = "${JOB_CACHE_DIR}/docker-buildx"
         DEPENDENCY_TRACK_URL = 'http://docker-prod:8080'
-        DEPENDENCY_TRACK_PROJECT = '344a6e91-7644-45c7-befd-1bbe2d3622c4'
+        DEPENDENCY_TRACK_PROJECT_NAME = 'dorfgefluester'
     }
 
     stages {
@@ -492,39 +492,51 @@ EOF
                     steps {
                         catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
                             script {
-                                if (!env.DEPENDENCY_TRACK_PROJECT?.trim()) {
-                                    echo 'Dependency-Track SBOM skipped: DEPENDENCY_TRACK_PROJECT is not configured.'
+                                if (!env.DEPENDENCY_TRACK_PROJECT_NAME?.trim()) {
+                                    echo 'Dependency-Track SBOM skipped: DEPENDENCY_TRACK_PROJECT_NAME is not configured.'
                                     return
                                 }
                             }
 
-                            sh '''
-                                test -f package.json
-                                test -f package-lock.json
-                                mkdir -p reports/dependency-track
-                                rm -f reports/dependency-track/sbom.json
+                            withCredentials([string(credentialsId: 'dependency-track-api-key', variable: 'DT_API_KEY')]) {
+                                sh '''
+                                    test -f package.json
+                                    test -f package-lock.json
+                                    mkdir -p reports/dependency-track
+                                    rm -f reports/dependency-track/sbom.json reports/dependency-track/bom-post.txt
 
-                                docker run --rm \
-                                  -u "$(id -u):$(id -g)" \
-                                  -v "$WORKSPACE:/app" \
-                                  -w /app \
-                                  -e HOME=/tmp \
-                                  node:20-slim \
-                                  npx --yes @cyclonedx/cyclonedx-npm --package-lock-only --output-file reports/dependency-track/sbom.json
+                                    docker run --rm \
+                                      -u "$(id -u):$(id -g)" \
+                                      -v "$WORKSPACE:/app" \
+                                      -w /app \
+                                      -e HOME=/tmp \
+                                      node:20-slim \
+                                      npx --yes @cyclonedx/cyclonedx-npm --package-lock-only --output-file reports/dependency-track/sbom.json
 
-                                test -s reports/dependency-track/sbom.json
-                            '''
+                                    test -s reports/dependency-track/sbom.json
 
-                            dependencyTrackPublisher(
-                                artifact: 'reports/dependency-track/sbom.json',
-                                projectId: "${env.DEPENDENCY_TRACK_PROJECT}",
-                                synchronous: true
-                            )
+                                    RESPONSE=$(curl -sS -o /tmp/dependency-track-response.txt -w "%{http_code}" \
+                                      -X POST "${DEPENDENCY_TRACK_URL}/api/v1/bom" \
+                                      -H "X-Api-Key: ${DT_API_KEY}" \
+                                      -F "autoCreate=true" \
+                                      -F "projectName=${DEPENDENCY_TRACK_PROJECT_NAME}" \
+                                      -F "projectVersion=${BRANCH_NAME}" \
+                                      -F "bom=@reports/dependency-track/sbom.json")
+
+                                    echo "Dependency-Track upload HTTP status: ${RESPONSE}"
+                                    echo 'Dependency-Track upload response body:'
+                                    cat /tmp/dependency-track-response.txt | tee reports/dependency-track/bom-post.txt || true
+
+                                    if [ "${RESPONSE}" != "200" ] && [ "${RESPONSE}" != "201" ]; then
+                                      exit 1
+                                    fi
+                                '''
+                            }
                         }
                     }
                     post {
                         always {
-                            archiveArtifacts artifacts: 'reports/dependency-track/sbom.json', allowEmptyArchive: true
+                            archiveArtifacts artifacts: 'reports/dependency-track/*', allowEmptyArchive: true
                         }
                     }
                 }
