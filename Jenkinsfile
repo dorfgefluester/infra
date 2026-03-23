@@ -192,7 +192,12 @@ pipeline {
                             mkdir -p "$(dirname "$JOB_CACHE_TOUCH_FILE")"
                             touch "$JOB_CACHE_TOUCH_FILE"
                             mkdir -p "$NPM_CACHE_DIR"
-                            npm ci --cache "$NPM_CACHE_DIR" --prefer-offline --no-audit --no-fund
+                            docker run --rm -u "$(id -u):$(id -g)" \
+                              -v "$WORKSPACE:/work" -w /work \
+                              -v "$NPM_CACHE_DIR:/tmp/npm-cache" \
+                              -e HOME=/tmp \
+                              node:20 \
+                              sh -lc 'npm ci --cache /tmp/npm-cache --prefer-offline --no-audit --no-fund'
                         '''
                     }
                 }
