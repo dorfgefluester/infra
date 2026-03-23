@@ -100,7 +100,7 @@ Optional: enable extra scanner logs by setting the Jenkins parameter `SONAR_VERB
 
 ### Requirements
 - One of:
-  - `docker` or `podman` available locally (for `aquasec/trivy:latest`)
+  - `docker` or `podman` available locally (for the pinned `aquasec/trivy` container image used by CI)
   - local `trivy` binary in `$PATH`
 
 ### Run

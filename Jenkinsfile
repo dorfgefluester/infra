@@ -37,6 +37,7 @@ pipeline {
         NPM_CACHE_DIR = "${JOB_CACHE_DIR}/npm"
         TRIVY_FS_CACHE_DIR = "${JOB_CACHE_DIR}/trivy-fs"
         TRIVY_IMAGE_CACHE_DIR = "${JOB_CACHE_DIR}/trivy-image"
+        TRIVY_IMAGE = 'docker.io/aquasec/trivy@sha256:7228e304ae0f610a1fad937baa463598cadac0c2ac4027cc68f3a8b997115689'
         DOCKER_BUILDX_CACHE_DIR = "${JOB_CACHE_DIR}/docker-buildx"
         DEPENDENCY_TRACK_URL = 'http://docker-prod:8080'
         DEPENDENCY_TRACK_PROJECT_NAME = 'dorfgefluester'
@@ -416,7 +417,7 @@ pipeline {
                             docker run --rm -u "$(id -u):$(id -g)" \
                               -v "$WORKSPACE:/src" \
                               -v "$TRIVY_FS_CACHE_DIR:/tmp/trivy-cache" \
-                              aquasec/trivy fs /src \
+                              "$TRIVY_IMAGE" fs /src \
                               --cache-dir /tmp/trivy-cache \
                               --format json --output /src/reports/trivy/fs.json \
                               --exit-code 0 --severity HIGH,CRITICAL --ignore-unfixed || true
@@ -1073,7 +1074,7 @@ exit 0
                                         script: """
                                             docker run --rm \
                                               -v '${trivyCacheDir}:/tmp/trivy-cache' \
-                                              aquasec/trivy image \
+                                              '${env.TRIVY_IMAGE}' image \
                                               --cache-dir /tmp/trivy-cache \
                                               --download-db-only \
                                               --db-repository ${repo}
@@ -1098,7 +1099,7 @@ exit 0
                                   -v /var/run/docker.sock:/var/run/docker.sock \
                                   -v '${trivyCacheDir}:/tmp/trivy-cache' \
                                   -v '${env.WORKSPACE}:/work' \
-                                  aquasec/trivy image \
+                                  '${env.TRIVY_IMAGE}' image \
                                   --cache-dir /tmp/trivy-cache \
                                   --skip-db-update \
                                   --format json --output /work/reports/trivy/image.json \

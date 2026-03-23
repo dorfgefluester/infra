@@ -4,6 +4,9 @@ const path = require('path');
 const { parseArgs } = require('./cli-args.cjs');
 const { ensureDirForFile, readJson, writeText } = require('./fs-utils.cjs');
 
+const DEFAULT_TRIVY_IMAGE =
+  'docker.io/aquasec/trivy@sha256:7228e304ae0f610a1fad937baa463598cadac0c2ac4027cc68f3a8b997115689';
+
 function commandExists(command) {
   const bin = process.platform === 'win32' ? 'where' : 'which';
   const res = spawnSync(bin, [command], { stdio: 'ignore' });
@@ -391,7 +394,7 @@ function buildContainerTrivyArgs({
     `${absScanPath}:${containerScanPath}`,
     '-v',
     `${cacheDirAbs}:${containerCacheDir}`,
-    'docker.io/aquasec/trivy:latest',
+    DEFAULT_TRIVY_IMAGE,
     'fs',
     containerScanPath,
     '--cache-dir',

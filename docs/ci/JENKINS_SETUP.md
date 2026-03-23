@@ -70,7 +70,7 @@ podman --version
 
 ```bash
 podman pull docker.io/owasp/dependency-check:latest
-podman pull docker.io/aquasec/trivy:latest
+podman pull docker.io/aquasec/trivy@sha256:7228e304ae0f610a1fad937baa463598cadac0c2ac4027cc68f3a8b997115689
 podman pull docker.io/returntocorp/semgrep:latest
 ```
 
