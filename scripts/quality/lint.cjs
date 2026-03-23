@@ -27,7 +27,6 @@ async function main() {
     'tests',
     '--files-ignore-unknown=true',
     '--formatter-enabled=false',
-    '--organize-imports-enabled=false',
     '--reporter=summary',
     '--diagnostic-level=warn',
     '--error-on-warnings',
