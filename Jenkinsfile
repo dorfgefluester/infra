@@ -203,7 +203,13 @@ pipeline {
                         // Build production assets, archive them, and validate bundle-size budgets in one branch.
                         stage('Build & Bundle Budget') {
                             steps {
-                                sh 'npm run build'
+                                sh '''
+                                    docker run --rm -u "$(id -u):$(id -g)" \
+                                      -v "$WORKSPACE:/work" -w /work \
+                                      -e HOME=/tmp \
+                                      node:20 \
+                                      sh -lc 'npm run build'
+                                '''
                                 script {
                                     def isReleaseBranch = (env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/)
                                     def maxIndexKb = isReleaseBranch ? 450 : 550
