@@ -43,7 +43,8 @@ describe('pipeline smoke contracts', () => {
 
     expect(viteConfig.server.port).toBe(3000);
     expect(playwrightContract.baseURL).toBe('http://localhost:3000');
-    expect(playwrightContract.webServerCommand).toBe('npm run dev');
+    expect(playwrightContract.webServerCommand).toContain('npm run dev');
+    expect(playwrightContract.webServerCommand).toContain('--strictPort');
     expect(playwrightContract.webServerUrl).toBe('http://localhost:3000');
     expect(playwrightContract.testDir).toBe('./tests/e2e');
   });
