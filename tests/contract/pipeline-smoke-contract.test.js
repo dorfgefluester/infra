@@ -59,6 +59,17 @@ describe('pipeline smoke contracts', () => {
     expect(packageJson.scripts.lint).toBe('node scripts/quality/lint.cjs');
   });
 
+  test('nginx runtime exposes health endpoints for root and prefixed deployments', () => {
+    const nginxConfig = readRepoFile('nginx/default.conf');
+
+    expect(nginxConfig).toContain('location = /health');
+    expect(nginxConfig).toContain('location = /healthz');
+    expect(nginxConfig).toContain('location = /dorfgefluester/health');
+    expect(nginxConfig).toContain('location = /dorfgefluester/healthz');
+    expect(nginxConfig).toContain('{"status":"healthy"}');
+    expect(nginxConfig).toContain('{"status":"unhealthy"}');
+  });
+
   test('html shell keeps the critical containers and controls used by smoke tests', () => {
     const doc = parseHtml('index.html');
     const requiredIds = [
