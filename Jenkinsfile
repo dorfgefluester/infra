@@ -453,45 +453,17 @@ pipeline {
                         '''
                         sh(
                             script: '''
-node <<'EOF'
-const fs = require('fs');
-
-const inputPath = 'reports/trivy/fs.json';
-const label = 'Trivy FS Scan';
-
-function summarizeTrivyFs(path) {
-  try {
-    const raw = fs.readFileSync(path, 'utf8');
-    const data = JSON.parse(raw);
-
-    const results = Array.isArray(data.Results) ? data.Results : [];
-    let high = 0;
-    let critical = 0;
-
-    for (const result of results) {
-      const vulns = Array.isArray(result.Vulnerabilities) ? result.Vulnerabilities : [];
-      for (const v of vulns) {
-        if (v.Severity === 'HIGH') {
-          high++;
-        } else if (v.Severity === 'CRITICAL') {
-          critical++;
-        }
-      }
-    }
-
-    console.log(`=== ${label} summary ===`);
-    console.log(`HIGH vulnerabilities: ${high}`);
-    console.log(`CRITICAL vulnerabilities: ${critical}`);
-  } catch (err) {
-    console.log(`=== ${label} summary ===`);
-    console.log(`Unable to read or parse ${path}: ${err.message}`);
-  }
-}
-
-summarizeTrivyFs(inputPath);
-EOF
+                              docker run --rm -u "$(id -u):$(id -g)" \
+                                -v "$WORKSPACE:/work" -w /work \
+                                node:20 \
+                                node scripts/quality/trivy-summary.cjs \
+                                  --input reports/trivy/fs.json \
+                                  --label "Trivy FS Scan" \
+                                  --out-json reports/trivy/fs-summary.json \
+                                  --out-md reports/trivy/fs-summary.md
                             '''.stripIndent()
                         )
+                        sh 'echo "" && echo "Trivy FS summary (reports/trivy/fs-summary.md)" && sed -n "1,160p" reports/trivy/fs-summary.md || true'
                     }
                 }
                 // Run Semgrep SAST ruleset for fast pattern-based vulnerability detection.
@@ -910,6 +882,32 @@ exit 0
 
                               echo ""
                               echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                              echo "SonarQube Investigation Snapshot"
+                              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                              echo ""
+                              node - <<'EOF'
+const fs = require('fs');
+
+try {
+  const report = JSON.parse(fs.readFileSync('reports/sonarqube/sonar-report.json', 'utf8'));
+  const qg = report?.qualityGate?.status || 'UNKNOWN';
+  const relHigh = Number(report?.totals?.reliability_high ?? report?.reliability_high?.length ?? 0);
+  const secHigh = Number(report?.totals?.security_high ?? report?.security_high?.length ?? 0);
+  const maintHigh = Number(report?.totals?.maintainability_high ?? report?.maintainability_high?.length ?? 0);
+  const hotspots = report?.hotspots?.unavailable ? `unavailable (${report.hotspots.unavailable})` : String(report?.totals?.hotspots ?? report?.hotspots?.total ?? 0);
+  console.log(`- Quality gate: ${qg}`);
+  console.log(`- Reliability high: ${relHigh}`);
+  console.log(`- Security high: ${secHigh}`);
+  console.log(`- Maintainability high: ${maintHigh}`);
+  console.log(`- Security hotspots: ${hotspots}`);
+  console.log(`- Next action: ${relHigh > 0 || secHigh > 0 ? 'Fix high-impact reliability/security findings.' : maintHigh > 0 ? 'Group maintainability cleanup by file/module.' : 'No high-impact findings in this snapshot.'}`);
+} catch (error) {
+  console.log(`- Unable to summarize reports/sonarqube/sonar-report.json: ${error.message}`);
+}
+EOF
+
+                              echo ""
+                              echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
                               echo "SonarQube Planning Summary (for IMPLEMENTATION_PLAN input)"
                               echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
                               echo ""
@@ -1136,6 +1134,22 @@ exit 0
                                   "${IMAGE_REPO}:${imageTag}"
                             """
                             def trivyStatus = sh(script: trivyCommand, returnStatus: true)
+                            writeFile file: 'reports/trivy/image-exit-code.txt', text: "${trivyStatus}\n"
+                            if (fileExists('reports/trivy/image.json')) {
+                                sh """
+                                  docker run --rm -u "\$(id -u):\$(id -g)" \
+                                    -v "${env.WORKSPACE}:/work" -w /work \
+                                    node:20 \
+                                    node scripts/quality/trivy-summary.cjs \
+                                      --input reports/trivy/image.json \
+                                      --label "Trivy Image Scan" \
+                                      --out-json reports/trivy/image-summary.json \
+                                      --out-md reports/trivy/image-summary.md
+                                """
+                                sh 'echo "" && echo "Trivy image summary (reports/trivy/image-summary.md)" && sed -n "1,160p" reports/trivy/image-summary.md || true'
+                            } else {
+                                writeFile file: 'reports/trivy/image-summary.md', text: "Trivy image scan did not produce reports/trivy/image.json.\n"
+                            }
                             if (trivyStatus != 0) {
                                 if (isReleaseBranch) {
                                     error("Trivy image scan failed with exit code ${trivyStatus}.")
@@ -1329,7 +1343,22 @@ exit 0
                           }
                           EOF
                         """
-                        archiveArtifacts artifacts: 'build-meta.json', allowEmptyArchive: false
+                        sh '''
+                          cat > build-meta.md <<EOF
+# Build Metadata
+
+- Branch: ${BRANCH_NAME}
+- Build: ${BUILD_NUMBER}
+- Git SHA: ${GIT_SHA}
+- Image tag: ${IMAGE_TAG}
+- Image: ${IMAGE_REPO}:${IMAGE_TAG}
+
+## Investigation Artifacts
+
+$(find reports -maxdepth 2 -type f | sort | sed 's#^#- #')
+EOF
+                        '''
+                        archiveArtifacts artifacts: 'build-meta.json,build-meta.md', allowEmptyArchive: false
                     }
                 }
             }

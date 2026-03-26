@@ -1,5 +1,6 @@
 const { parseArgs } = require('./cli-args.cjs');
 const { writeJson, writeText } = require('./fs-utils.cjs');
+const { resolveSonarToken } = require('./sonar-config.cjs');
 
 const DEFAULT_PROJECT_KEY = 'dorfgefluester';
 const PAGE_SIZE = 500;
@@ -258,7 +259,7 @@ async function main() {
   }
 
   const hostUrl = normalizeHostUrl(args['host-url'] || process.env.SONAR_HOST_URL);
-  const token = args.token || process.env.SONAR_TOKEN;
+  const token = resolveSonarToken(args.token);
   const projectKey = args['project-key'] || process.env.SONAR_PROJECT_KEY || DEFAULT_PROJECT_KEY;
 
   const outJson = args['out-json'] || 'reports/sonarqube/issues.json';
@@ -276,7 +277,9 @@ async function main() {
     throw new Error('Missing SonarQube host URL. Provide --host-url or set SONAR_HOST_URL.');
   }
   if (!token) {
-    throw new Error('Missing SonarQube token. Provide --token or set SONAR_TOKEN.');
+    throw new Error(
+      'Missing SonarQube token. Provide --token, set SONAR_TOKEN/SONAR_AUTH_TOKEN, or configure repo-local git key dorfgefluester.sonar.token.',
+    );
   }
 
   const [measures, issues] = await Promise.all([
