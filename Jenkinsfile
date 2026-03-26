@@ -126,10 +126,10 @@ pipeline {
             }
         }
 
-        // Run compile, lint, tests, and optional E2E directly on the Jenkins agent.
-        // The nested docker agent wrapper has been unstable on these workers: once the remoting
-        // channel flaps, Jenkins frequently cannot reconnect to or tear down the CI container and
-        // the build hangs until the global timeout expires.
+        // Run compile, lint, tests, and optional E2E from the Jenkins agent while executing
+        // the Node-based workload itself in short-lived Docker containers. This keeps the
+        // runtime consistent with dependency installation/build (Node 20) without relying on
+        // a long-lived nested Docker agent wrapper, which has been unstable on these workers.
         stage('CI') {
             when {
                 expression { return env.BUILD_ALLOWED == 'true' }
@@ -276,8 +276,13 @@ pipeline {
                         // Enforce lint rules before delivery to keep code quality consistent.
                         stage('Lint') {
                             steps {
-                                sh 'npm run lint --if-present -- --max-warnings=0'
-                                sh 'npm run format:check --if-present'
+                                sh '''
+                                    docker run --rm -u "$(id -u):$(id -g)" \
+                                      -v "$WORKSPACE:/work" -w /work \
+                                      -e HOME=/tmp \
+                                      node:20 \
+                                      sh -lc 'npm run lint --if-present -- --max-warnings=0 && npm run format:check --if-present'
+                                '''
                             }
                         }
 
@@ -291,11 +296,24 @@ pipeline {
                                     sh "mkdir -p ${junitDir}"
                                     if (hasJunit) {
                                         withEnv(["JEST_JUNIT_OUTPUT_DIR=${junitDir}", "JEST_JUNIT_OUTPUT_NAME=jest-junit.xml"]) {
-                                            sh 'npm test -- --ci --coverage --reporters=default --reporters=jest-junit'
+                                            sh '''
+                                                docker run --rm -u "$(id -u):$(id -g)" \
+                                                  -v "$WORKSPACE:/work" -w /work \
+                                                  -e HOME=/tmp \
+                                                  -e JEST_JUNIT_OUTPUT_DIR="$JEST_JUNIT_OUTPUT_DIR" \
+                                                  -e JEST_JUNIT_OUTPUT_NAME="$JEST_JUNIT_OUTPUT_NAME" \
+                                                  node:20 \
+                                                  sh -lc 'npm test -- --ci --coverage --reporters=default --reporters=jest-junit'
+                                            '''
                                         }
                                     } else {
-                                        sh 'npm test -- --ci --coverage --json --outputFile=tests/junit/jest.json'
-                                        sh 'node scripts/jest-json-to-junit.cjs tests/junit/jest.json tests/junit/jest-junit.xml'
+                                        sh '''
+                                            docker run --rm -u "$(id -u):$(id -g)" \
+                                              -v "$WORKSPACE:/work" -w /work \
+                                              -e HOME=/tmp \
+                                              node:20 \
+                                              sh -lc 'npm test -- --ci --coverage --json --outputFile=tests/junit/jest.json && node scripts/jest-json-to-junit.cjs tests/junit/jest.json tests/junit/jest-junit.xml'
+                                        '''
                                     }
                                 }
                             }
