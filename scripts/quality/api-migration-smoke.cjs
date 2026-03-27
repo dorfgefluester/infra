@@ -11,6 +11,34 @@ const EXPECTED_TABLES = [
   'users',
 ];
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function retryMigrationPass(runMigrationPass, attempts = 6, delayMs = 2000) {
+  let lastError;
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      await runMigrationPass();
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt === attempts) {
+        break;
+      }
+
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `Migration smoke attempt ${attempt}/${attempts} failed: ${message}. Retrying in ${delayMs}ms...`,
+      );
+      await sleep(delayMs);
+    }
+  }
+
+  throw lastError;
+}
+
 async function main() {
   const databaseUrl = process.env.DATABASE_URL;
   if (!databaseUrl) {
@@ -24,8 +52,8 @@ async function main() {
     const migrateModuleUrl = pathToFileURL(path.resolve(process.cwd(), 'api', 'src', 'db', 'migrate.js')).href;
     const { runMigrations } = await import(migrateModuleUrl);
 
-    await runMigrations(pool);
-    await runMigrations(pool);
+    await retryMigrationPass(() => runMigrations(pool));
+    await retryMigrationPass(() => runMigrations(pool));
 
     const result = await pool.query(
       `SELECT table_name
