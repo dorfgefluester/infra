@@ -204,6 +204,43 @@ pipeline {
                     }
                 }
 
+                stage('Database Migration Smoke Test') {
+                    steps {
+                        sh '''
+                            migration_db_port=55432
+                            migration_db_container="dorfgefluester-migration-smoke-${BUILD_NUMBER}"
+                            trap 'docker rm -f "$migration_db_container" >/dev/null 2>&1 || true' EXIT
+                            docker rm -f "$migration_db_container" >/dev/null 2>&1 || true
+                            docker run -d --rm \
+                              --name "$migration_db_container" \
+                              -e POSTGRES_DB=dorfgefluester \
+                              -e POSTGRES_USER=dorfgefluester \
+                              -e POSTGRES_PASSWORD=dorfgefluester-ci \
+                              -p 127.0.0.1:${migration_db_port}:5432 \
+                              postgres:16-alpine >/dev/null
+                            ready=0
+                            for _ in $(seq 1 30); do
+                              if docker exec "$migration_db_container" pg_isready -U dorfgefluester -d dorfgefluester >/dev/null 2>&1; then
+                                ready=1
+                                break
+                              fi
+                              sleep 2
+                            done
+                            if [ "$ready" != "1" ]; then
+                              docker logs "$migration_db_container" || true
+                              echo "ERROR: postgres migration smoke container did not become ready."
+                              exit 1
+                            fi
+                            docker run --rm --network host -u "$(id -u):$(id -g)" \
+                              -v "$WORKSPACE:/work" -w /work \
+                              -e HOME=/tmp \
+                              -e DATABASE_URL="postgres://dorfgefluester:dorfgefluester-ci@127.0.0.1:${migration_db_port}/dorfgefluester" \
+                              node:20 \
+                              sh -lc 'node scripts/quality/api-migration-smoke.cjs'
+                        '''
+                    }
+                }
+
                 // Run the expensive CI checks in parallel once dependencies are installed.
                 stage('CI Checks') {
                     parallel {

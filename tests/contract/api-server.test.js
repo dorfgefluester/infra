@@ -50,6 +50,9 @@ describe('API server', () => {
         sessionTtlHours: 24,
         secureCookies: false,
         exposeResetTokens: true,
+        apiLogLevel: 'error',
+        authRateLimitWindowMs: 60 * 1000,
+        authRateLimitMax: 3,
         nodeEnv: 'test',
       },
       storage,
@@ -182,5 +185,56 @@ describe('API server', () => {
 
     expect(login.status).toBe(200);
     expect(login.data.authenticated).toBe(true);
+  });
+
+  test('validates public payloads and rate limits auth endpoints', async () => {
+    const invalidRegister = await request('/api/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: 'invalid',
+        password: 'short',
+      }),
+    });
+
+    expect(invalidRegister.status).toBe(400);
+    expect(invalidRegister.data.error).toBe('invalid_registration');
+
+    const registered = await request('/api/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: 'validate@test.dev',
+        password: 'valid-password-123',
+        playerName: 'Validator',
+      }),
+    });
+    expect(registered.status).toBe(201);
+
+    const invalidMigration = await request('/api/profile/guest-migration', {
+      method: 'POST',
+      body: JSON.stringify({
+        saveSlots: [{ slot: 99 }],
+      }),
+    });
+    expect(invalidMigration.status).toBe(400);
+    expect(invalidMigration.data.error).toBe('invalid_guest_migration');
+
+    const logout = await request('/api/auth/logout', { method: 'POST', body: '{}' });
+    expect(logout.status).toBe(200);
+
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const loginAttempt = await request('/api/auth/login', {
+        method: 'POST',
+        body: JSON.stringify({
+          email: 'validate@test.dev',
+          password: 'wrong-password',
+        }),
+      });
+      if (attempt < 3) {
+        expect(loginAttempt.status).toBe(401);
+      } else {
+        expect(loginAttempt.status).toBe(429);
+        expect(loginAttempt.data.error).toBe('too_many_requests');
+      }
+    }
   });
 });
