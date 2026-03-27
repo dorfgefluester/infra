@@ -1,0 +1,49 @@
+services:
+  dorfgefluester-postgres:
+    image: docker.io/library/postgres:16-alpine
+    environment:
+      POSTGRES_DB: dorfgefluester
+      POSTGRES_USER: dorfgefluester
+      POSTGRES_PASSWORD: dorfgefluester-dev-only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5432:5432"
+    volumes:
+      - dorfgefluester-postgres-data:/var/lib/postgresql/data
+
+  dorfgefluester-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    environment:
+      API_PORT: 3001
+      APP_ORIGIN: http://127.0.0.1:3000
+      DATABASE_URL: postgres://dorfgefluester:dorfgefluester-dev-only@dorfgefluester-postgres:5432/dorfgefluester
+      EXPOSE_RESET_TOKENS: "true"
+      NODE_ENV: development
+      SECURE_COOKIES: "false"
+    depends_on:
+      dorfgefluester-postgres:
+        condition: service_healthy
+    ports:
+      - "3001:3001"
+
+  dorfgefluester-web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_DEPLOYMENT_ENVIRONMENT: development
+        VITE_BASE_PATH: /
+    depends_on:
+      dorfgefluester-api:
+        condition: service_started
+    ports:
+      - "3000:8080"
+
+volumes:
+  dorfgefluester-postgres-data:

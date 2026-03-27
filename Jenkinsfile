@@ -17,10 +17,12 @@ pipeline {
     environment {
         PROJECT_NAME = 'dorfgefluester'
         IMAGE_NAME = 'dorfgefluester'
+        API_IMAGE_NAME = 'dorfgefluester-api'
         NODE_VERSION = '20'
         NODE_MAJOR_REQUIRED = '18'
         REGISTRY = 'dev-env-01:5000'
         IMAGE_REPO = "${REGISTRY}/${IMAGE_NAME}"
+        API_IMAGE_REPO = "${REGISTRY}/${API_IMAGE_NAME}"
         DEPLOY_HOST = 'dev-env-01'
         DEPLOY_USER = 'deploy'
         SSH_CRED_ID = 'deploy'
@@ -793,8 +795,11 @@ exit 0
                                 sh """
                                   helm template ${RELEASE} helm/dorfgefluester \
                                     --namespace ${NAMESPACE} \
-                                    --set image.repository=${IMAGE_REPO} \
-                                    --set image.tag=ci-dry-run \
+                                    --set web.image.repository=${IMAGE_REPO} \
+                                    --set web.image.tag=ci-dry-run \
+                                    --set api.image.repository=${API_IMAGE_REPO} \
+                                    --set api.image.tag=ci-dry-run \
+                                    --set api.env.appOrigin=http://dorf.test \
                                     --set ingress.host=dorf.test > /tmp/${RELEASE}-rendered.yaml
                                   kubectl apply --dry-run=client -f /tmp/${RELEASE}-rendered.yaml
                                 """
@@ -984,7 +989,7 @@ EOF
             }
         }
 
-        // Build, scan, push, and archive metadata for the deployable container image.
+        // Build, scan, push, and archive metadata for the deployable container images.
         stage('Docker Build, Scan & Push') {
             when {
                 expression { return env.BUILD_ALLOWED == 'true' }
@@ -995,13 +1000,10 @@ EOF
                 }
             }
             stages {
-                // Build the immutable SHA-tagged image that will be scanned and published.
-                stage('Build Docker Image') {
+                stage('Build Docker Images') {
                     steps {
                         script {
-                            def isUnset = { value ->
-                                return !value?.trim() || value.trim() == 'null'
-                            }
+                            def isUnset = { value -> !value?.trim() || value.trim() == 'null' }
                             def resolvedTag = env.IMAGE_TAG?.trim()
                             if (isUnset(resolvedTag) && !isUnset(env.GIT_COMMIT)) {
                                 resolvedTag = env.GIT_COMMIT.take(7)
@@ -1012,50 +1014,52 @@ EOF
                             }
                             if (isUnset(resolvedTag)) {
                                 error('Unable to resolve IMAGE_TAG from GIT_COMMIT or git rev-parse.')
-            }
-            env.GIT_SHA = resolvedTag
-            env.IMAGE_TAG = resolvedTag
-            echo "Using image tag ${resolvedTag}."
-            def deploymentEnvironment = env.BRANCH_NAME == 'master'
-                ? 'staging'
-                : ((env.BRANCH_NAME ?: 'development').trim())
-            def frontendBasePath = '/dorfgefluester/'
-            echo "Using deployment environment ${deploymentEnvironment} for frontend telemetry."
-            echo "Using frontend base path ${frontendBasePath} for production assets."
-            def buildxCacheDir = "${env.DOCKER_BUILDX_CACHE_DIR}"
-            sh """
-                set -eu
-                mkdir -p "\$(dirname '${env.JOB_CACHE_TOUCH_FILE}')"
-                touch '${env.JOB_CACHE_TOUCH_FILE}'
-                mkdir -p '${buildxCacheDir}'
-                if docker buildx version >/dev/null 2>&1; then
-                  export DOCKER_BUILDKIT=1
-                  if docker buildx inspect >/dev/null 2>&1 && docker buildx build \
-                    --load \
-                    --tag ${IMAGE_REPO}:${resolvedTag} \
-                    --build-arg VITE_DEPLOYMENT_ENVIRONMENT=${deploymentEnvironment} \
-                    --build-arg VITE_BASE_PATH=${frontendBasePath} \
-                    --cache-from type=local,src='${buildxCacheDir}' \
-                    --cache-to type=local,dest='${buildxCacheDir}-new',mode=max \
-                    .; then
-                    rm -rf '${buildxCacheDir}'
-                    mv '${buildxCacheDir}-new' '${buildxCacheDir}'
-                  else
-                    rm -rf '${buildxCacheDir}-new'
-                    echo 'docker buildx cache export unsupported on this agent; falling back to uncached docker build.'
-                    docker build --build-arg VITE_DEPLOYMENT_ENVIRONMENT=${deploymentEnvironment} --build-arg VITE_BASE_PATH=${frontendBasePath} -t ${IMAGE_REPO}:${resolvedTag} .
-                  fi
-                else
-                  echo 'docker buildx unavailable on agent; falling back to classic docker build.'
-                  docker build --build-arg VITE_DEPLOYMENT_ENVIRONMENT=${deploymentEnvironment} --build-arg VITE_BASE_PATH=${frontendBasePath} -t ${IMAGE_REPO}:${resolvedTag} .
-                fi
-            """
-        }
-    }
-}
+                            }
+                            env.GIT_SHA = resolvedTag
+                            env.IMAGE_TAG = resolvedTag
+                            echo "Using image tag ${resolvedTag}."
 
-                // Scan the built image for high/critical vulnerabilities before publishing.
-                stage('Scan Docker Image') {
+                            def deploymentEnvironment = env.BRANCH_NAME == 'master'
+                                ? 'staging'
+                                : ((env.BRANCH_NAME ?: 'development').trim())
+                            def frontendBasePath = '/dorfgefluester/'
+                            def buildxCacheDir = "${env.DOCKER_BUILDX_CACHE_DIR}"
+                            echo "Using deployment environment ${deploymentEnvironment} for frontend telemetry."
+                            echo "Using frontend base path ${frontendBasePath} for production assets."
+
+                            sh """
+                                set -eu
+                                mkdir -p "\$(dirname '${env.JOB_CACHE_TOUCH_FILE}')"
+                                touch '${env.JOB_CACHE_TOUCH_FILE}'
+                                mkdir -p '${buildxCacheDir}'
+                                if docker buildx version >/dev/null 2>&1; then
+                                  export DOCKER_BUILDKIT=1
+                                  if docker buildx inspect >/dev/null 2>&1 && docker buildx build \
+                                    --load \
+                                    --tag ${IMAGE_REPO}:${resolvedTag} \
+                                    --build-arg VITE_DEPLOYMENT_ENVIRONMENT=${deploymentEnvironment} \
+                                    --build-arg VITE_BASE_PATH=${frontendBasePath} \
+                                    --cache-from type=local,src='${buildxCacheDir}' \
+                                    --cache-to type=local,dest='${buildxCacheDir}-new',mode=max \
+                                    .; then
+                                    rm -rf '${buildxCacheDir}'
+                                    mv '${buildxCacheDir}-new' '${buildxCacheDir}'
+                                  else
+                                    rm -rf '${buildxCacheDir}-new'
+                                    echo 'docker buildx cache export unsupported on this agent; falling back to uncached docker build.'
+                                    docker build --build-arg VITE_DEPLOYMENT_ENVIRONMENT=${deploymentEnvironment} --build-arg VITE_BASE_PATH=${frontendBasePath} -t ${IMAGE_REPO}:${resolvedTag} .
+                                  fi
+                                else
+                                  echo 'docker buildx unavailable on agent; falling back to classic docker build.'
+                                  docker build --build-arg VITE_DEPLOYMENT_ENVIRONMENT=${deploymentEnvironment} --build-arg VITE_BASE_PATH=${frontendBasePath} -t ${IMAGE_REPO}:${resolvedTag} .
+                                fi
+                                docker build -f Dockerfile.api -t ${API_IMAGE_REPO}:${resolvedTag} .
+                            """
+                        }
+                    }
+                }
+
+                stage('Scan Docker Images') {
                     steps {
                         script {
                             def imageTag = env.IMAGE_TAG?.trim()
@@ -1121,203 +1125,226 @@ EOF
                                 echo 'Using cached Trivy DB (fresh enough for this build).'
                             }
 
-                            def trivyCommand = """
-                                docker run --rm \
-                                  -v /var/run/docker.sock:/var/run/docker.sock \
-                                  -v '${trivyCacheDir}:/tmp/trivy-cache' \
-                                  -v '${env.WORKSPACE}:/work' \
-                                  '${env.TRIVY_IMAGE}' image \
-                                  --cache-dir /tmp/trivy-cache \
-                                  --skip-db-update \
-                                  --format json --output /work/reports/trivy/image.json \
-                                  --exit-code 1 --severity ${isReleaseBranch ? 'CRITICAL' : 'HIGH,CRITICAL'} --ignore-unfixed \
-                                  "${IMAGE_REPO}:${imageTag}"
-                            """
-                            def trivyStatus = sh(script: trivyCommand, returnStatus: true)
-                            writeFile file: 'reports/trivy/image-exit-code.txt', text: "${trivyStatus}\n"
-                            if (fileExists('reports/trivy/image.json')) {
-                                sh """
-                                  docker run --rm -u "\$(id -u):\$(id -g)" \
-                                    -v "${env.WORKSPACE}:/work" -w /work \
-                                    node:20 \
-                                    node scripts/quality/trivy-summary.cjs \
-                                      --input reports/trivy/image.json \
-                                      --label "Trivy Image Scan" \
-                                      --out-json reports/trivy/image-summary.json \
-                                      --out-md reports/trivy/image-summary.md
+                            def images = [
+                                [name: 'web', repo: env.IMAGE_REPO],
+                                [name: 'api', repo: env.API_IMAGE_REPO]
+                            ]
+                            def failedScans = []
+                            for (def image in images) {
+                                def slug = image.name
+                                def jsonPath = "reports/trivy/image-${slug}.json"
+                                def summaryJson = "reports/trivy/image-${slug}-summary.json"
+                                def summaryMd = "reports/trivy/image-${slug}-summary.md"
+                                def trivyCommand = """
+                                    docker run --rm \
+                                      -v /var/run/docker.sock:/var/run/docker.sock \
+                                      -v '${trivyCacheDir}:/tmp/trivy-cache' \
+                                      -v '${env.WORKSPACE}:/work' \
+                                      '${env.TRIVY_IMAGE}' image \
+                                      --cache-dir /tmp/trivy-cache \
+                                      --skip-db-update \
+                                      --format json --output /work/${jsonPath} \
+                                      --exit-code 1 --severity ${isReleaseBranch ? 'CRITICAL' : 'HIGH,CRITICAL'} --ignore-unfixed \
+                                      "${image.repo}:${imageTag}"
                                 """
-                                sh 'echo "" && echo "Trivy image summary (reports/trivy/image-summary.md)" && sed -n "1,160p" reports/trivy/image-summary.md || true'
-                            } else {
-                                writeFile file: 'reports/trivy/image-summary.md', text: "Trivy image scan did not produce reports/trivy/image.json.\n"
+                                def trivyStatus = sh(script: trivyCommand, returnStatus: true)
+                                writeFile file: "reports/trivy/image-${slug}-exit-code.txt", text: "${trivyStatus}\n"
+                                if (fileExists(jsonPath)) {
+                                    sh """
+                                      docker run --rm -u "\$(id -u):\$(id -g)" \
+                                        -v "${env.WORKSPACE}:/work" -w /work \
+                                        node:20 \
+                                        node scripts/quality/trivy-summary.cjs \
+                                          --input ${jsonPath} \
+                                          --label "Trivy ${slug.toUpperCase()} Image Scan" \
+                                          --out-json ${summaryJson} \
+                                          --out-md ${summaryMd}
+                                    """
+                                    sh "echo '' && echo 'Trivy ${slug} image summary (${summaryMd})' && sed -n '1,160p' ${summaryMd} || true"
+                                } else {
+                                    writeFile file: summaryMd, text: "Trivy ${slug} image scan did not produce ${jsonPath}.\n"
+                                }
+                                if (trivyStatus != 0) {
+                                    failedScans << "${slug}:${trivyStatus}"
+                                }
                             }
-                            if (trivyStatus != 0) {
+
+                            if (!failedScans.isEmpty()) {
+                                def message = "Trivy image scan reported vulnerabilities above the configured threshold (${failedScans.join(', ')})."
                                 if (isReleaseBranch) {
-                                    error("Trivy image scan failed with exit code ${trivyStatus}.")
+                                    error(message)
                                 }
                                 catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-                                    error("Trivy image scan reported vulnerabilities above the configured threshold (exit ${trivyStatus}).")
+                                    error(message)
                                 }
                             }
                         }
                     }
                 }
 
-	                // Push directly when possible and fallback via deploy host for insecure-registry setups.
-	                stage('Push Docker Image') {
-	                    when {
-	                        branch 'master'
-	                    }
-	                    steps {
-	                        script {
-	                            def imageTag = env.IMAGE_TAG?.trim()
-	                            if (!imageTag || imageTag == 'null') {
-	                                sh 'git config --global --add safe.directory "$WORKSPACE"'
-	                                imageTag = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
-	                            }
-	                            if (!imageTag || imageTag == 'null') {
-	                                error('Unable to resolve IMAGE_TAG for docker push.')
-	                            }
-	                            env.IMAGE_TAG = imageTag
-	                            def extraTags = []
-	                            if (env.BRANCH_NAME == 'master') {
-	                                extraTags << 'master-latest'
-	                            } else if (env.BRANCH_NAME == 'staging') {
-	                                extraTags << 'staging-latest'
-	                            }
-	                            extraTags = extraTags.findAll { it?.trim() }.unique()
+                stage('Push Docker Images') {
+                    when {
+                        branch 'master'
+                    }
+                    steps {
+                        script {
+                            def imageTag = env.IMAGE_TAG?.trim()
+                            if (!imageTag || imageTag == 'null') {
+                                sh 'git config --global --add safe.directory "$WORKSPACE"'
+                                imageTag = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
+                            }
+                            if (!imageTag || imageTag == 'null') {
+                                error('Unable to resolve IMAGE_TAG for docker push.')
+                            }
+                            env.IMAGE_TAG = imageTag
+                            def extraTags = []
+                            if (env.BRANCH_NAME == 'master') {
+                                extraTags << 'master-latest'
+                            } else if (env.BRANCH_NAME == 'staging') {
+                                extraTags << 'staging-latest'
+                            }
+                            extraTags = extraTags.findAll { it?.trim() }.unique()
+                            def tagsToPush = ([imageTag] + extraTags).unique()
+                            def imageRepos = [env.IMAGE_REPO, env.API_IMAGE_REPO]
 
-	                            for (def tag : extraTags) {
-	                                sh "docker tag ${IMAGE_REPO}:${imageTag} ${IMAGE_REPO}:${tag}"
-	                            }
+                            def pushRepo = { String repo ->
+                                for (def tag : extraTags) {
+                                    sh "docker tag ${repo}:${imageTag} ${repo}:${tag}"
+                                }
 
-	                            def tagsToPush = ([imageTag] + extraTags).unique()
-	                            def pushDirectAll = {
-	                                def ok = true
-	                                for (def tag : tagsToPush) {
-	                                    def status = sh(script: "docker push ${IMAGE_REPO}:${tag}", returnStatus: true)
-	                                    if (status != 0) {
-	                                        ok = false
-	                                    }
-	                                }
-	                                return ok
-	                            }
+                                def pushDirectAll = {
+                                    def ok = true
+                                    for (def tag : tagsToPush) {
+                                        def status = sh(script: "docker push ${repo}:${tag}", returnStatus: true)
+                                        if (status != 0) {
+                                            ok = false
+                                        }
+                                    }
+                                    return ok
+                                }
 
-	                            def pushSkopeoAll = {
-	                                def ok = true
-	                                for (def tag : tagsToPush) {
-	                                    def status = sh(
-	                                        script: """
-	                                          docker run --rm \
-	                                            -v /var/run/docker.sock:/var/run/docker.sock \
-	                                            quay.io/skopeo/stable:latest \
-	                                            copy --dest-tls-verify=false \
-	                                            docker-daemon:${IMAGE_REPO}:${tag} \
-	                                            docker://${IMAGE_REPO}:${tag}
-	                                        """,
-	                                        returnStatus: true
-	                                    )
-	                                    if (status != 0) {
-	                                        ok = false
-	                                    }
-	                                }
-	                                return ok
-	                            }
+                                def pushSkopeoAll = {
+                                    def ok = true
+                                    for (def tag : tagsToPush) {
+                                        def status = sh(
+                                            script: """
+                                              docker run --rm \
+                                                -v /var/run/docker.sock:/var/run/docker.sock \
+                                                quay.io/skopeo/stable:latest \
+                                                copy --dest-tls-verify=false \
+                                                docker-daemon:${repo}:${tag} \
+                                                docker://${repo}:${tag}
+                                            """,
+                                            returnStatus: true
+                                        )
+                                        if (status != 0) {
+                                            ok = false
+                                        }
+                                    }
+                                    return ok
+                                }
 
-	                            if (pushDirectAll()) {
-	                                echo "Image pushed directly from Jenkins agent (${tagsToPush.join(', ')})."
-	                            } else {
-	                                echo "Direct push failed (likely insecure registry/TLS mismatch). Trying skopeo HTTP push."
-	                                if (pushSkopeoAll()) {
-	                                    echo "Image pushed from Jenkins agent using skopeo HTTP fallback (${tagsToPush.join(', ')})."
-	                                } else {
-	                                    echo "Skopeo HTTP push failed. Falling back to push via ${DEPLOY_HOST}."
-	                                    def imageArchive = "/tmp/${RELEASE}-${imageTag}.tar.gz"
-	                                    def sshCredCandidates = [env.SSH_CRED_ID, 'dev-env-01-ssh', 'deploy'].findAll { it?.trim() }.unique()
-	                                    def pushedViaSsh = false
-	                                    def lastSshError = null
-	                                    for (def credId : sshCredCandidates) {
-	                                        try {
-	                                            withCredentials([sshUserPrivateKey(credentialsId: credId, keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
-	                                                def extraTagsCsv = extraTags.join(',')
-	                                                sh """
-	                                                  set -e
-	                                                  docker save ${IMAGE_REPO}:${imageTag} | gzip > ${imageArchive}
-	                                                  scp -i "\$SSH_KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no ${imageArchive} \$SSH_USER@${DEPLOY_HOST}:/tmp/
-	                                                  ssh -i "\$SSH_KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no \$SSH_USER@${DEPLOY_HOST} '
-	                                                    set -e
-	                                                    IMAGE_ARCHIVE=${imageArchive}
-	                                                    IMAGE_TAG=${imageTag}
-	                                                    IMAGE_REPO=${IMAGE_REPO}
-	                                                    EXTRA_TAGS_CSV="${extraTagsCsv}"
-	                                                    if docker info >/dev/null 2>&1; then
-	                                                      DOCKER_CMD="docker"
-	                                                    elif sudo -n docker info >/dev/null 2>&1; then
-	                                                      DOCKER_CMD="sudo docker"
-	                                                    elif sudo -n k3s ctr version >/dev/null 2>&1; then
-	                                                      gunzip -c \$IMAGE_ARCHIVE | sudo -n k3s ctr -n k8s.io images import -
-	                                                      sudo -n k3s ctr -n k8s.io images push --plain-http \$IMAGE_REPO:\$IMAGE_TAG
-	                                                      if [ -n "\$EXTRA_TAGS_CSV" ]; then
-	                                                        IFS=","; for t in \$EXTRA_TAGS_CSV; do
-	                                                          [ -n "\$t" ] || continue
-	                                                          sudo -n k3s ctr -n k8s.io images tag \$IMAGE_REPO:\$IMAGE_TAG \$IMAGE_REPO:\$t
-	                                                          sudo -n k3s ctr -n k8s.io images push --plain-http \$IMAGE_REPO:\$t
-	                                                        done
-	                                                      fi
-	                                                      rm -f \$IMAGE_ARCHIVE
-	                                                      exit 0
-	                                                    else
-	                                                      echo "Neither docker nor k3s ctr is available for user \$USER on ${DEPLOY_HOST}."
-	                                                      exit 1
-	                                                    fi
-	                                                    gunzip -c \$IMAGE_ARCHIVE | \$DOCKER_CMD load
-	                                                    \$DOCKER_CMD push \$IMAGE_REPO:\$IMAGE_TAG
-	                                                    if [ -n "\$EXTRA_TAGS_CSV" ]; then
-	                                                      IFS=","; for t in \$EXTRA_TAGS_CSV; do
-	                                                        [ -n "\$t" ] || continue
-	                                                        \$DOCKER_CMD tag \$IMAGE_REPO:\$IMAGE_TAG \$IMAGE_REPO:\$t
-	                                                        \$DOCKER_CMD push \$IMAGE_REPO:\$t
-	                                                      done
-	                                                    fi
-	                                                    rm -f \$IMAGE_ARCHIVE
-	                                                  '
-	                                                  rm -f ${imageArchive}
-	                                                """
-	                                            }
-	                                            env.SSH_CRED_ID = credId
-	                                            echo "Image pushed via SSH using credential '${credId}' (${tagsToPush.join(', ')})."
-	                                            pushedViaSsh = true
-	                                            break
-	                                        } catch (err) {
-	                                            lastSshError = err
-	                                            echo "SSH push fallback failed with credential '${credId}': ${err.getMessage()}"
-	                                        }
-	                                    }
-	                                    if (!pushedViaSsh) {
-	                                        throw lastSshError ?: new RuntimeException('SSH push fallback failed for all configured credentials.')
-	                                    }
-	                                }
-	                            }
+                                if (pushDirectAll()) {
+                                    echo "Image pushed directly from Jenkins agent for ${repo} (${tagsToPush.join(', ')})."
+                                    return
+                                }
+                                echo "Direct push failed for ${repo}. Trying skopeo HTTP push."
+                                if (pushSkopeoAll()) {
+                                    echo "Image pushed using skopeo HTTP fallback for ${repo} (${tagsToPush.join(', ')})."
+                                    return
+                                }
+                                echo "Skopeo HTTP push failed for ${repo}. Falling back to push via ${DEPLOY_HOST}."
+                                def imageArchive = "/tmp/${RELEASE}-${repo.tokenize('/').last()}-${imageTag}.tar.gz"
+                                def sshCredCandidates = [env.SSH_CRED_ID, 'dev-env-01-ssh', 'deploy'].findAll { it?.trim() }.unique()
+                                def pushedViaSsh = false
+                                def lastSshError = null
+                                for (def credId : sshCredCandidates) {
+                                    try {
+                                        withCredentials([sshUserPrivateKey(credentialsId: credId, keyFileVariable: 'SSH_KEY', usernameVariable: 'SSH_USER')]) {
+                                            def extraTagsCsv = extraTags.join(',')
+                                            sh """
+                                              set -e
+                                              docker save ${repo}:${imageTag} | gzip > ${imageArchive}
+                                              scp -i "\$SSH_KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no ${imageArchive} \$SSH_USER@${DEPLOY_HOST}:/tmp/
+                                              ssh -i "\$SSH_KEY" -o IdentitiesOnly=yes -o StrictHostKeyChecking=no \$SSH_USER@${DEPLOY_HOST} '
+                                                set -e
+                                                IMAGE_ARCHIVE=${imageArchive}
+                                                IMAGE_TAG=${imageTag}
+                                                IMAGE_REPO=${repo}
+                                                EXTRA_TAGS_CSV="${extraTagsCsv}"
+                                                if docker info >/dev/null 2>&1; then
+                                                  DOCKER_CMD="docker"
+                                                elif sudo -n docker info >/dev/null 2>&1; then
+                                                  DOCKER_CMD="sudo docker"
+                                                elif sudo -n k3s ctr version >/dev/null 2>&1; then
+                                                  gunzip -c \$IMAGE_ARCHIVE | sudo -n k3s ctr -n k8s.io images import -
+                                                  sudo -n k3s ctr -n k8s.io images push --plain-http \$IMAGE_REPO:\$IMAGE_TAG
+                                                  if [ -n "\$EXTRA_TAGS_CSV" ]; then
+                                                    IFS=","; for t in \$EXTRA_TAGS_CSV; do
+                                                      [ -n "\$t" ] || continue
+                                                      sudo -n k3s ctr -n k8s.io images tag \$IMAGE_REPO:\$IMAGE_TAG \$IMAGE_REPO:\$t
+                                                      sudo -n k3s ctr -n k8s.io images push --plain-http \$IMAGE_REPO:\$t
+                                                    done
+                                                  fi
+                                                  rm -f \$IMAGE_ARCHIVE
+                                                  exit 0
+                                                else
+                                                  echo "Neither docker nor k3s ctr is available for user \$USER on ${DEPLOY_HOST}."
+                                                  exit 1
+                                                fi
+                                                gunzip -c \$IMAGE_ARCHIVE | \$DOCKER_CMD load
+                                                \$DOCKER_CMD push \$IMAGE_REPO:\$IMAGE_TAG
+                                                if [ -n "\$EXTRA_TAGS_CSV" ]; then
+                                                  IFS=","; for t in \$EXTRA_TAGS_CSV; do
+                                                    [ -n "\$t" ] || continue
+                                                    \$DOCKER_CMD tag \$IMAGE_REPO:\$IMAGE_TAG \$IMAGE_REPO:\$t
+                                                    \$DOCKER_CMD push \$IMAGE_REPO:\$t
+                                                  done
+                                                fi
+                                                rm -f \$IMAGE_ARCHIVE
+                                              '
+                                              rm -f ${imageArchive}
+                                            """
+                                        }
+                                        env.SSH_CRED_ID = credId
+                                        echo "Image pushed via SSH using credential '${credId}' for ${repo} (${tagsToPush.join(', ')})."
+                                        pushedViaSsh = true
+                                        break
+                                    } catch (err) {
+                                        lastSshError = err
+                                        echo "SSH push fallback failed with credential '${credId}' for ${repo}: ${err.getMessage()}"
+                                    }
+                                }
+                                if (!pushedViaSsh) {
+                                    throw lastSshError ?: new RuntimeException("SSH push fallback failed for ${repo} using all configured credentials.")
+                                }
+                            }
 
-	                            // Best-effort verification: confirm the tag(s) exist in registry after push.
-	                            catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-	                                sh """
-	                                  set -e
-	                                  url="http://${REGISTRY}/v2/${IMAGE_NAME}/tags/list"
-	                                  if ! tags_json=\$(curl -fsS "\$url"); then
-	                                    echo "WARN: unable to query registry tags at \$url"
-	                                    exit 0
-	                                  fi
-	                                  for t in ${tagsToPush.join(' ')}; do
-	                                    echo "\$tags_json" | grep -Fq "\"\$t\"" || { echo "WARN: registry tag missing after push: \$t"; exit 1; }
-	                                  done
-	                                  echo "Registry tags verified: ${tagsToPush.join(', ')}"
-	                                """
-	                            }
-	                        }
-	                    }
-	                }
+                            for (def repo : imageRepos) {
+                                pushRepo(repo)
+                            }
 
-                // Archive build metadata so downstream deploy jobs can consume image details reliably.
+                            catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                                for (def repo : imageRepos) {
+                                    sh """
+                                      set -e
+                                      image_name='${repo.tokenize('/').last()}'
+                                      url="http://${REGISTRY}/v2/\$image_name/tags/list"
+                                      if ! tags_json=\$(curl -fsS "\$url"); then
+                                        echo "WARN: unable to query registry tags at \$url"
+                                        exit 0
+                                      fi
+                                      for t in ${tagsToPush.join(' ')}; do
+                                        echo "\$tags_json" | grep -Fq "\"\$t\"" || { echo "WARN: registry tag missing after push for \$image_name: \$t"; exit 1; }
+                                      done
+                                      echo "Registry tags verified for \$image_name: ${tagsToPush.join(', ')}"
+                                    """
+                                }
+                            }
+                        }
+                    }
+                }
+
                 stage('Archive Build Metadata') {
                     steps {
                         script {
@@ -1339,7 +1366,8 @@ EOF
                             "branch": "${env.BRANCH_NAME}",
                             "buildNumber": "${env.BUILD_NUMBER}",
                             "registry": "${env.REGISTRY}",
-                            "image": "${env.IMAGE_REPO}:${env.IMAGE_TAG}"
+                            "webImage": "${env.IMAGE_REPO}:${env.IMAGE_TAG}",
+                            "apiImage": "${env.API_IMAGE_REPO}:${env.IMAGE_TAG}"
                           }
                           EOF
                         """
@@ -1351,7 +1379,8 @@ EOF
 - Build: ${BUILD_NUMBER}
 - Git SHA: ${GIT_SHA}
 - Image tag: ${IMAGE_TAG}
-- Image: ${IMAGE_REPO}:${IMAGE_TAG}
+- Web image: ${IMAGE_REPO}:${IMAGE_TAG}
+- API image: ${API_IMAGE_REPO}:${IMAGE_TAG}
 
 ## Investigation Artifacts
 
@@ -1369,7 +1398,7 @@ EOF
                         if (!publishedTag || publishedTag == 'null') {
                             publishedTag = env.GIT_SHA?.trim()
                         }
-                        echo "Image published: ${env.IMAGE_REPO}:${publishedTag ?: 'unknown'}"
+                        echo "Images published: ${env.IMAGE_REPO}:${publishedTag ?: 'unknown'} and ${env.API_IMAGE_REPO}:${publishedTag ?: 'unknown'}"
                     }
                     echo "Use dedicated deploy pipelines for environment rollout (e.g. jenkins/*-deploy.Jenkinsfile)."
                 }

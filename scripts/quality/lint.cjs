@@ -7,7 +7,10 @@ function resolveBiomeBin() {
 }
 
 function run(cmd, args) {
-  const res = spawnSync(cmd, args, { stdio: 'inherit' });
+  const res = spawnSync(cmd, args, {
+    stdio: 'inherit',
+    shell: process.platform === 'win32',
+  });
   if (res.error) {
     throw res.error;
   }
