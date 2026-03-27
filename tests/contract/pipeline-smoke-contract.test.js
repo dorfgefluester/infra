@@ -70,6 +70,14 @@ describe('pipeline smoke contracts', () => {
     expect(packageJson.scripts.lint).toBe('node scripts/quality/lint.cjs');
   });
 
+  test('jenkins bundle budget check runs in the same containerized build context', () => {
+    const jenkinsfile = readRepoFile('Jenkinsfile');
+
+    expect(jenkinsfile).toContain("cat > .jenkins-bundle-budget-check.cjs <<'EOF'");
+    expect(jenkinsfile).toContain("sh -lc 'npm run build && node ./.jenkins-bundle-budget-check.cjs'");
+    expect(jenkinsfile).toContain("trap 'rm -f .jenkins-bundle-budget-check.cjs' EXIT");
+  });
+
   test('nginx runtime exposes health endpoints for root and prefixed deployments', () => {
     const nginxConfig = readRepoFile('nginx/default.conf');
 

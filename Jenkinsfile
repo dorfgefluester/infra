@@ -210,23 +210,16 @@ pipeline {
                         // Build production assets, archive them, and validate bundle-size budgets in one branch.
                         stage('Build & Bundle Budget') {
                             steps {
-                                sh '''
-                                    docker run --rm -u "$(id -u):$(id -g)" \
-                                      -v "$WORKSPACE:/work" -w /work \
-                                      -e HOME=/tmp \
-                                      node:20 \
-                                      sh -lc 'npm run build'
-                                '''
                                 script {
                                     def isReleaseBranch = (env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/)
                                     def maxIndexKb = isReleaseBranch ? 450 : 550
                                     def maxPhaserKb = isReleaseBranch ? 1600 : 1700
                                     def maxTotalKb = isReleaseBranch ? 2100 : 2300
                                     sh """
-                                        node -e '
-                                        const fs = require(\"fs\");
-                                        const path = require(\"path\");
-                                        const dir = path.join(\"dist\", \"assets\");
+                                        cat > .jenkins-bundle-budget-check.cjs <<'EOF'
+                                         const fs = require(\"fs\");
+                                         const path = require(\"path\");
+                                         const dir = path.join(\"dist\", \"assets\");
                                         if (!fs.existsSync(dir)) {
                                           console.error(\"Bundle budget check failed: dist/assets not found.\");
                                           process.exit(1);
@@ -260,11 +253,17 @@ pipeline {
                                         }
 
                                         console.log(`Bundle sizes: index=\${indexChunk ? (indexChunk.bytes / 1024).toFixed(2) : \"n/a\"} KiB, phaser=\${phaserChunk ? (phaserChunk.bytes / 1024).toFixed(2) : \"n/a\"} KiB, total=\${(totalBytes / 1024).toFixed(2)} KiB.`);
-                                        if (violations.length > 0) {
-                                          console.error(\"Bundle budget violations:\\n - \" + violations.join(\"\\n - \"));
-                                          process.exit(1);
-                                        }
-                                        '
+                                         if (violations.length > 0) {
+                                           console.error(\"Bundle budget violations:\\n - \" + violations.join(\"\\n - \"));
+                                           process.exit(1);
+                                         }
+EOF
+                                        trap 'rm -f .jenkins-bundle-budget-check.cjs' EXIT
+                                        docker run --rm -u "\$(id -u):\$(id -g)" \\
+                                          -v "\$WORKSPACE:/work" -w /work \\
+                                          -e HOME=/tmp \\
+                                          node:20 \\
+                                          sh -lc 'npm run build && node ./.jenkins-bundle-budget-check.cjs'
                                     """
                                 }
                             }
