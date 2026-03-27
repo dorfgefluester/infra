@@ -219,7 +219,7 @@ pipeline {
                               -p 127.0.0.1:${migration_db_port}:5432 \
                               postgres:16-alpine >/dev/null
                             ready=0
-                            for _ in $(seq 1 30); do
+                            for _ in $(seq 1 90); do
                               if docker exec "$migration_db_container" pg_isready -U dorfgefluester -d dorfgefluester >/dev/null 2>&1; then
                                 ready=1
                                 break

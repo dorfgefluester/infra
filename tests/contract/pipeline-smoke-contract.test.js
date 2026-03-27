@@ -78,6 +78,14 @@ describe('pipeline smoke contracts', () => {
     expect(jenkinsfile).toContain("trap 'rm -f .jenkins-bundle-budget-check.cjs' EXIT");
   });
 
+  test('jenkins database migration smoke test allows slow postgres startup and runs the repo smoke script', () => {
+    const jenkinsfile = readRepoFile('Jenkinsfile');
+
+    expect(jenkinsfile).toContain("stage('Database Migration Smoke Test')");
+    expect(jenkinsfile).toContain('for _ in $(seq 1 90); do');
+    expect(jenkinsfile).toContain("sh -lc 'node scripts/quality/api-migration-smoke.cjs'");
+  });
+
   test('nginx runtime exposes health endpoints for root and prefixed deployments', () => {
     const nginxConfig = readRepoFile('nginx/default.conf');
 
