@@ -52,39 +52,8 @@ pipeline {
                 script {
                     def isVersionBranch = (env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/)
                     if (isVersionBranch) {
-                        def latest = ''
-                        def repoUrl = scm.userRemoteConfigs[0].url
-                        def anonymousRepoUrl = repoUrl
-                        if (repoUrl?.startsWith('git@github.com:')) {
-                            anonymousRepoUrl = "https://github.com/${repoUrl.substring('git@github.com:'.length())}"
-                        } else if (repoUrl?.startsWith('ssh://git@github.com/')) {
-                            anonymousRepoUrl = "https://github.com/${repoUrl.substring('ssh://git@github.com/'.length())}"
-                        }
-
-                        try {
-                            retry(3) {
-                                latest = timeout(time: 30, unit: 'SECONDS') {
-                                    sh(
-                                        script: "git ls-remote --heads '${anonymousRepoUrl}' | cut -f2 | sed 's#refs/heads/##' | grep -E -x '[0-9]+\\.[0-9]+\\.[0-9]+' | sort -V | tail -n 1",
-                                        returnStdout: true
-                                    ).trim()
-                                }
-                            }
-                        } catch (err) {
-                            echo "Latest-branch lookup failed for ${anonymousRepoUrl}: ${err.getMessage()}"
-                            echo "Continuing build without latest-version branch gating."
-                            latest = env.BRANCH_NAME
-                        }
-                        env.LATEST_VERSION_BRANCH = latest
-                        if (!latest?.trim()) {
-                            echo "Latest version branch lookup returned empty; continuing build for ${env.BRANCH_NAME}."
-                        } else if (env.BRANCH_NAME != latest) {
-                            env.BUILD_ALLOWED = 'false'
-                            currentBuild.result = 'NOT_BUILT'
-                            echo "Skipping build for ${env.BRANCH_NAME} (latest is ${latest})."
-                        } else {
-                            echo "Building latest version branch: ${latest}."
-                        }
+                        env.LATEST_VERSION_BRANCH = env.BRANCH_NAME
+                        echo "Version branch (${env.BRANCH_NAME}); continuing. Remote latest-version gating is disabled on current Jenkins agents."
                     } else {
                         echo "Non-version branch (${env.BRANCH_NAME}); continuing."
                     }
