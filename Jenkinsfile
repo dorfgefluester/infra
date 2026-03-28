@@ -113,7 +113,22 @@ pipeline {
                         script {
                             for (int attempt = 1; attempt <= 3; attempt++) {
                                 try {
-                                    checkout scm
+                                    def scmVars = checkout scm
+                                    def resolvedSha = scmVars?.GIT_COMMIT?.trim()
+                                    if (resolvedSha && resolvedSha != 'null') {
+                                        resolvedSha = resolvedSha.take(7)
+                                    }
+                                    if (!resolvedSha) {
+                                        resolvedSha = env.GIT_COMMIT?.trim()
+                                        if (resolvedSha && resolvedSha != 'null') {
+                                            resolvedSha = resolvedSha.take(7)
+                                        }
+                                    }
+                                    if (!resolvedSha || resolvedSha == 'null') {
+                                        error('Unable to resolve GIT_SHA during checkout.')
+                                    }
+                                    env.GIT_SHA = resolvedSha
+                                    env.IMAGE_TAG = resolvedSha
                                     break
                                 } catch (err) {
                                     if (attempt == 3) {
@@ -125,19 +140,6 @@ pipeline {
                                     sleep time: waitSeconds, unit: 'SECONDS'
                                 }
                             }
-                            def resolvedSha = env.GIT_COMMIT?.trim()
-                            if (resolvedSha && resolvedSha != 'null') {
-                                resolvedSha = resolvedSha.take(7)
-                            }
-                            if (!resolvedSha || resolvedSha == 'null') {
-                                sh 'git config --global --add safe.directory "$WORKSPACE"'
-                                resolvedSha = sh(script: 'git rev-parse --short HEAD', returnStdout: true).trim()
-                            }
-                            if (!resolvedSha || resolvedSha == 'null') {
-                                error('Unable to resolve GIT_SHA during checkout.')
-                            }
-                            env.GIT_SHA = resolvedSha
-                            env.IMAGE_TAG = resolvedSha
                         }
                     }
                 }
