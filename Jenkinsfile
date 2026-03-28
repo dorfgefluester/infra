@@ -52,16 +52,28 @@ pipeline {
                 script {
                     def isVersionBranch = (env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/)
                     if (isVersionBranch) {
-                        def credId = scm.userRemoteConfigs[0].credentialsId
-                        def repoUrl = scm.userRemoteConfigs[0].url
                         def latest = ''
-                        withCredentials([gitUsernamePassword(credentialsId: credId, gitToolName: 'Default')]) {
+                        def repoUrl = scm.userRemoteConfigs[0].url
+                        def anonymousRepoUrl = repoUrl
+                        if (repoUrl?.startsWith('git@github.com:')) {
+                            anonymousRepoUrl = "https://github.com/${repoUrl.substring('git@github.com:'.length())}"
+                        } else if (repoUrl?.startsWith('ssh://git@github.com/')) {
+                            anonymousRepoUrl = "https://github.com/${repoUrl.substring('ssh://git@github.com/'.length())}"
+                        }
+
+                        try {
                             retry(3) {
-                                latest = sh(
-                                    script: "git ls-remote --heads '${repoUrl}' | cut -f2 | sed 's#refs/heads/##' | grep -E -x '[0-9]+\\.[0-9]+\\.[0-9]+' | sort -V | tail -n 1",
-                                    returnStdout: true
-                                ).trim()
+                                latest = timeout(time: 30, unit: 'SECONDS') {
+                                    sh(
+                                        script: "git ls-remote --heads '${anonymousRepoUrl}' | cut -f2 | sed 's#refs/heads/##' | grep -E -x '[0-9]+\\.[0-9]+\\.[0-9]+' | sort -V | tail -n 1",
+                                        returnStdout: true
+                                    ).trim()
+                                }
                             }
+                        } catch (err) {
+                            echo "Latest-branch lookup failed for ${anonymousRepoUrl}: ${err.getMessage()}"
+                            echo "Continuing build without latest-version branch gating."
+                            latest = env.BRANCH_NAME
                         }
                         env.LATEST_VERSION_BRANCH = latest
                         if (env.BRANCH_NAME != latest) {
