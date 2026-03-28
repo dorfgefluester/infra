@@ -253,54 +253,11 @@ pipeline {
                                     def maxPhaserKb = isReleaseBranch ? 1600 : 1700
                                     def maxTotalKb = isReleaseBranch ? 2100 : 2300
                                     sh """
-                                        cat > .jenkins-bundle-budget-check.cjs <<'EOF'
-                                         const fs = require(\"fs\");
-                                         const path = require(\"path\");
-                                         const dir = path.join(\"dist\", \"assets\");
-                                        if (!fs.existsSync(dir)) {
-                                          console.error(\"Bundle budget check failed: dist/assets not found.\");
-                                          process.exit(1);
-                                        }
-                                        const files = fs.readdirSync(dir).filter((name) => name.endsWith(\".js\"));
-                                        const stats = files.map((name) => ({ name, bytes: fs.statSync(path.join(dir, name)).size }));
-                                        const findByPrefix = (prefix) => stats.find((entry) => entry.name.startsWith(prefix));
-                                        const indexChunk = findByPrefix(\"index-\");
-                                        const phaserChunk = findByPrefix(\"phaser-\");
-                                        const totalBytes = stats.reduce((sum, entry) => sum + entry.bytes, 0);
-
-                                        const limits = {
-                                          index: ${maxIndexKb} * 1024,
-                                          phaser: ${maxPhaserKb} * 1024,
-                                          total: ${maxTotalKb} * 1024
-                                        };
-
-                                        const violations = [];
-                                        if (!indexChunk) {
-                                          violations.push(\"Missing index-* chunk in dist/assets.\");
-                                        } else if (indexChunk.bytes > limits.index) {
-                                          violations.push(`index chunk \${(indexChunk.bytes / 1024).toFixed(2)} KiB exceeds ${maxIndexKb} KiB.`);
-                                        }
-                                        if (!phaserChunk) {
-                                          violations.push(\"Missing phaser-* chunk in dist/assets.\");
-                                        } else if (phaserChunk.bytes > limits.phaser) {
-                                          violations.push(`phaser chunk \${(phaserChunk.bytes / 1024).toFixed(2)} KiB exceeds ${maxPhaserKb} KiB.`);
-                                        }
-                                        if (totalBytes > limits.total) {
-                                          violations.push(`total JS bundle \${(totalBytes / 1024).toFixed(2)} KiB exceeds ${maxTotalKb} KiB.`);
-                                        }
-
-                                        console.log(`Bundle sizes: index=\${indexChunk ? (indexChunk.bytes / 1024).toFixed(2) : \"n/a\"} KiB, phaser=\${phaserChunk ? (phaserChunk.bytes / 1024).toFixed(2) : \"n/a\"} KiB, total=\${(totalBytes / 1024).toFixed(2)} KiB.`);
-                                         if (violations.length > 0) {
-                                           console.error(\"Bundle budget violations:\\n - \" + violations.join(\"\\n - \"));
-                                           process.exit(1);
-                                         }
-EOF
-                                        trap 'rm -f .jenkins-bundle-budget-check.cjs' EXIT
                                         docker run --rm -u "\$(id -u):\$(id -g)" \\
                                           -v "\$WORKSPACE:/work" -w /work \\
                                           -e HOME=/tmp \\
                                           node:20 \\
-                                          sh -lc 'npm run build && node ./.jenkins-bundle-budget-check.cjs'
+                                          sh -lc 'npm run build && node scripts/quality/check-bundle-budget.cjs --max-index-kb ${maxIndexKb} --max-phaser-kb ${maxPhaserKb} --max-total-kb ${maxTotalKb}'
                                     """
                                 }
                             }
@@ -926,26 +883,7 @@ exit 0
                               echo "SonarQube Investigation Snapshot"
                               echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
                               echo ""
-                              node - <<'EOF'
-const fs = require('fs');
-
-try {
-  const report = JSON.parse(fs.readFileSync('reports/sonarqube/sonar-report.json', 'utf8'));
-  const qg = report?.qualityGate?.status || 'UNKNOWN';
-  const relHigh = Number(report?.totals?.reliability_high ?? report?.reliability_high?.length ?? 0);
-  const secHigh = Number(report?.totals?.security_high ?? report?.security_high?.length ?? 0);
-  const maintHigh = Number(report?.totals?.maintainability_high ?? report?.maintainability_high?.length ?? 0);
-  const hotspots = report?.hotspots?.unavailable ? `unavailable (${report.hotspots.unavailable})` : String(report?.totals?.hotspots ?? report?.hotspots?.total ?? 0);
-  console.log(`- Quality gate: ${qg}`);
-  console.log(`- Reliability high: ${relHigh}`);
-  console.log(`- Security high: ${secHigh}`);
-  console.log(`- Maintainability high: ${maintHigh}`);
-  console.log(`- Security hotspots: ${hotspots}`);
-  console.log(`- Next action: ${relHigh > 0 || secHigh > 0 ? 'Fix high-impact reliability/security findings.' : maintHigh > 0 ? 'Group maintainability cleanup by file/module.' : 'No high-impact findings in this snapshot.'}`);
-} catch (error) {
-  console.log(`- Unable to summarize reports/sonarqube/sonar-report.json: ${error.message}`);
-}
-EOF
+                              node scripts/quality/print-sonar-investigation-snapshot.cjs --input reports/sonarqube/sonar-report.json
 
                               echo ""
                               echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -1002,11 +940,7 @@ EOF
                         docker run --rm -u "$(id -u):$(id -g)" \
                           -v "$WORKSPACE:/work" -w /work \
                           node:20 \
-                          node - <<'EOF'
-const { renderChecklistReference } = require('./scripts/quality/build-pr-review-assets.cjs');
-const { writeText } = require('./scripts/quality/fs-utils.cjs');
-writeText('reports/pr-review/checklist-reference.md', '# PR Review Checklist\\n\\n' + renderChecklistReference() + '\\n');
-EOF
+                          node scripts/quality/write-pr-review-checklist-reference.cjs
 
                         echo ""
                         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -1450,35 +1384,7 @@ EOF
                             }
                             env.IMAGE_TAG = imageTag
                         }
-                        sh """
-                          cat > build-meta.json <<EOF
-                          {
-                            "gitSha": "${env.GIT_SHA}",
-                            "imageTag": "${env.IMAGE_TAG}",
-                            "branch": "${env.BRANCH_NAME}",
-                            "buildNumber": "${env.BUILD_NUMBER}",
-                            "registry": "${env.REGISTRY}",
-                            "webImage": "${env.IMAGE_REPO}:${env.IMAGE_TAG}",
-                            "apiImage": "${env.API_IMAGE_REPO}:${env.IMAGE_TAG}"
-                          }
-                          EOF
-                        """
-                        sh '''
-                          cat > build-meta.md <<EOF
-# Build Metadata
-
-- Branch: ${BRANCH_NAME}
-- Build: ${BUILD_NUMBER}
-- Git SHA: ${GIT_SHA}
-- Image tag: ${IMAGE_TAG}
-- Web image: ${IMAGE_REPO}:${IMAGE_TAG}
-- API image: ${API_IMAGE_REPO}:${IMAGE_TAG}
-
-## Investigation Artifacts
-
-$(find reports -maxdepth 2 -type f | sort | sed 's#^#- #')
-EOF
-                        '''
+                        sh 'node scripts/quality/write-build-meta.cjs'
                         archiveArtifacts artifacts: 'build-meta.json,build-meta.md', allowEmptyArchive: false
                     }
                 }
