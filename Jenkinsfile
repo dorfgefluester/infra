@@ -179,19 +179,39 @@ pipeline {
                 stage('Database Migration Smoke Test') {
                     steps {
                         sh '''
-                            migration_db_port=55432
                             migration_db_container="dorfgefluester-migration-smoke-${BUILD_NUMBER}"
-                            trap 'docker rm -f "$migration_db_container" >/dev/null 2>&1 || true' EXIT
+                            migration_db_network="dorfgefluester-migration-smoke-net-${BUILD_NUMBER}"
+                            cleanup() {
+                              status=$?
+                              if [ "$status" != "0" ]; then
+                                echo "Migration smoke diagnostics for $migration_db_container"
+                                docker ps -a --filter "name=$migration_db_container" || true
+                                docker logs "$migration_db_container" || true
+                                docker inspect "$migration_db_container" || true
+                              fi
+                              docker rm -f "$migration_db_container" >/dev/null 2>&1 || true
+                              docker network rm "$migration_db_network" >/dev/null 2>&1 || true
+                              exit "$status"
+                            }
+                            trap cleanup EXIT
                             docker rm -f "$migration_db_container" >/dev/null 2>&1 || true
+                            docker network rm "$migration_db_network" >/dev/null 2>&1 || true
+                            docker network create "$migration_db_network" >/dev/null
                             docker run -d --rm \
                               --name "$migration_db_container" \
+                              --network "$migration_db_network" \
                               -e POSTGRES_DB=dorfgefluester \
                               -e POSTGRES_USER=dorfgefluester \
                               -e POSTGRES_PASSWORD=dorfgefluester-ci \
-                              -p 127.0.0.1:${migration_db_port}:5432 \
                               postgres:16-alpine >/dev/null
                             ready=0
                             for _ in $(seq 1 90); do
+                              if ! docker ps --format '{{.Names}}' | grep -Fx "$migration_db_container" >/dev/null 2>&1; then
+                                echo "ERROR: postgres migration smoke container exited before readiness."
+                                docker ps -a --filter "name=$migration_db_container" || true
+                                docker logs "$migration_db_container" || true
+                                exit 1
+                              fi
                               if docker exec "$migration_db_container" pg_isready -U dorfgefluester -d dorfgefluester >/dev/null 2>&1; then
                                 ready=1
                                 break
@@ -203,10 +223,10 @@ pipeline {
                               echo "ERROR: postgres migration smoke container did not become ready."
                               exit 1
                             fi
-                            docker run --rm --network host -u "$(id -u):$(id -g)" \
+                            docker run --rm --network "$migration_db_network" -u "$(id -u):$(id -g)" \
                               -v "$WORKSPACE:/work" -w /work \
                               -e HOME=/tmp \
-                              -e DATABASE_URL="postgres://dorfgefluester:dorfgefluester-ci@127.0.0.1:${migration_db_port}/dorfgefluester" \
+                              -e DATABASE_URL="postgres://dorfgefluester:dorfgefluester-ci@${migration_db_container}:5432/dorfgefluester" \
                               node:20 \
                               sh -lc 'node scripts/quality/api-migration-smoke.cjs'
                         '''
