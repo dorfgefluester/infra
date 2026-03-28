@@ -76,7 +76,9 @@ pipeline {
                             latest = env.BRANCH_NAME
                         }
                         env.LATEST_VERSION_BRANCH = latest
-                        if (env.BRANCH_NAME != latest) {
+                        if (!latest?.trim()) {
+                            echo "Latest version branch lookup returned empty; continuing build for ${env.BRANCH_NAME}."
+                        } else if (env.BRANCH_NAME != latest) {
                             env.BUILD_ALLOWED = 'false'
                             currentBuild.result = 'NOT_BUILT'
                             echo "Skipping build for ${env.BRANCH_NAME} (latest is ${latest})."
