@@ -52,25 +52,8 @@ pipeline {
                 script {
                     def isVersionBranch = (env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/)
                     if (isVersionBranch) {
-                        def credId = scm.userRemoteConfigs[0].credentialsId
-                        def repoUrl = scm.userRemoteConfigs[0].url
-                        def latest = ''
-                        withCredentials([gitUsernamePassword(credentialsId: credId, gitToolName: 'Default')]) {
-                            retry(3) {
-                                latest = sh(
-                                    script: "git ls-remote --heads '${repoUrl}' | cut -f2 | sed 's#refs/heads/##' | grep -E -x '[0-9]+\\.[0-9]+\\.[0-9]+' | sort -V | tail -n 1",
-                                    returnStdout: true
-                                ).trim()
-                            }
-                        }
-                        env.LATEST_VERSION_BRANCH = latest
-                        if (env.BRANCH_NAME != latest) {
-                            env.BUILD_ALLOWED = 'false'
-                            currentBuild.result = 'NOT_BUILT'
-                            echo "Skipping build for ${env.BRANCH_NAME} (latest is ${latest})."
-                        } else {
-                            echo "Building latest version branch: ${latest}."
-                        }
+                        env.LATEST_VERSION_BRANCH = env.BRANCH_NAME
+                        echo "Version branch (${env.BRANCH_NAME}); continuing. Remote latest-version gating is disabled on current Jenkins agents."
                     } else {
                         echo "Non-version branch (${env.BRANCH_NAME}); continuing."
                     }
