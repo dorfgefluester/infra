@@ -15,13 +15,21 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+async function withPool(Pool, databaseUrl, operation) {
+  const pool = new Pool({ connectionString: databaseUrl });
+  try {
+    return await operation(pool);
+  } finally {
+    await pool.end();
+  }
+}
+
 async function retryMigrationPass(runMigrationPass, attempts = 6, delayMs = 2000) {
   let lastError;
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      await runMigrationPass();
-      return;
+      return await runMigrationPass();
     } catch (error) {
       lastError = error;
       if (attempt === attempts) {
@@ -46,34 +54,35 @@ async function main() {
   }
 
   const { Pool } = pg;
-  const pool = new Pool({ connectionString: databaseUrl });
+  const migrateModuleUrl = pathToFileURL(path.resolve(process.cwd(), 'api', 'src', 'db', 'migrate.js')).href;
+  const { runMigrations } = await import(migrateModuleUrl);
 
-  try {
-    const migrateModuleUrl = pathToFileURL(path.resolve(process.cwd(), 'api', 'src', 'db', 'migrate.js')).href;
-    const { runMigrations } = await import(migrateModuleUrl);
+  await retryMigrationPass(() => withPool(Pool, databaseUrl, runMigrations), 8, 3000);
+  await retryMigrationPass(() => withPool(Pool, databaseUrl, runMigrations), 8, 3000);
 
-    await retryMigrationPass(() => runMigrations(pool));
-    await retryMigrationPass(() => runMigrations(pool));
+  const result = await retryMigrationPass(
+    () =>
+      withPool(Pool, databaseUrl, (pool) =>
+        pool.query(
+          `SELECT table_name
+           FROM information_schema.tables
+           WHERE table_schema = 'public'
+             AND table_name = ANY($1::text[])
+           ORDER BY table_name`,
+          [EXPECTED_TABLES],
+        ),
+      ),
+    8,
+    3000,
+  );
 
-    const result = await pool.query(
-      `SELECT table_name
-       FROM information_schema.tables
-       WHERE table_schema = 'public'
-         AND table_name = ANY($1::text[])
-       ORDER BY table_name`,
-      [EXPECTED_TABLES],
-    );
-
-    const actual = result.rows.map((row) => row.table_name);
-    const missing = EXPECTED_TABLES.filter((tableName) => !actual.includes(tableName));
-    if (missing.length > 0) {
-      throw new Error(`Missing migrated tables: ${missing.join(', ')}`);
-    }
-
-    console.log(`API migration smoke check passed for tables: ${actual.join(', ')}`);
-  } finally {
-    await pool.end();
+  const actual = result.rows.map((row) => row.table_name);
+  const missing = EXPECTED_TABLES.filter((tableName) => !actual.includes(tableName));
+  if (missing.length > 0) {
+    throw new Error(`Missing migrated tables: ${missing.join(', ')}`);
   }
+
+  console.log(`API migration smoke check passed for tables: ${actual.join(', ')}`);
 }
 
 main().catch((error) => {
