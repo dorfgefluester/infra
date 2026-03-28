@@ -20,7 +20,7 @@ function listArtifacts(root) {
   };
 
   walk(reportsDir);
-  return found.sort();
+  return found.sort((left, right) => left.localeCompare(right));
 }
 
 function main() {
