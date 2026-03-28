@@ -936,6 +936,28 @@ exit 0
             }
         }
 
+        stage('Skill Gate') {
+            when {
+                expression { return env.BUILD_ALLOWED == 'true' }
+            }
+            steps {
+                sh '''
+                    mkdir -p reports/skill-gate
+                    node scripts/quality/run-skill-gate.cjs \
+                      --mode ci \
+                      --out-json reports/skill-gate/skill-gate.json \
+                      --out-md reports/skill-gate/skill-gate.md
+
+                    echo ""
+                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                    echo "Skill Gate Report (reports/skill-gate/skill-gate.md)"
+                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                    echo ""
+                    sed -n '1,220p' reports/skill-gate/skill-gate.md || true
+                '''
+            }
+        }
+
         // Mark the build UNSTABLE only when SonarQube reports HIGH-impact Security or Reliability findings.
         // This keeps CI "green by default" while you continuously burn down medium/maintainability issues.
         stage('Sonar Gate (High Impact)') {
