@@ -75,7 +75,7 @@ describe('pipeline smoke contracts', () => {
 
     expect(jenkinsfile).toContain('node scripts/quality/check-bundle-budget.cjs');
     expect(jenkinsfile).toContain("sh -lc 'npm run build && node scripts/quality/check-bundle-budget.cjs");
-    expect(jenkinsfile).not.toContain(".jenkins-bundle-budget-check.cjs");
+    expect(jenkinsfile).not.toContain('.jenkins-bundle-budget-check.cjs');
   });
 
   test('jenkins database migration smoke test allows slow postgres startup and runs the repo smoke script', () => {
