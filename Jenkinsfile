@@ -963,6 +963,62 @@ EOF
             }
         }
 
+        stage('PR Review Artifacts') {
+            when {
+                allOf {
+                    expression { return env.BUILD_ALLOWED == 'true' }
+                    expression { return env.CHANGE_ID?.trim() }
+                }
+            }
+            steps {
+                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                    sh '''
+                        set -e
+                        mkdir -p reports/pr-review
+
+                        target_ref="${CHANGE_TARGET:-master}"
+                        git fetch --no-tags origin "$target_ref"
+
+                        repo_id="$(git config --get remote.origin.url || printf '%s' "${JOB_NAME}")"
+                        base_sha="$(git merge-base HEAD "origin/$target_ref")"
+                        head_sha="$(git rev-parse HEAD)"
+                        head_ref="${CHANGE_BRANCH:-${BRANCH_NAME}}"
+
+                        docker run --rm -u "$(id -u):$(id -g)" \
+                          -v "$WORKSPACE:/work" -w /work \
+                          node:20 \
+                          node scripts/quality/build-pr-review-assets.cjs \
+                            --repo-root /work \
+                            --prompt-template .github/codex/review-prompt.md \
+                            --output-prompt reports/pr-review/codex-prompt.md \
+                            --output-schema reports/pr-review/codex-schema.json \
+                            --repository "$repo_id" \
+                            --pr-number "${CHANGE_ID}" \
+                            --base-ref "$target_ref" \
+                            --head-ref "$head_ref" \
+                            --base-sha "$base_sha" \
+                            --head-sha "$head_sha"
+
+                        docker run --rm -u "$(id -u):$(id -g)" \
+                          -v "$WORKSPACE:/work" -w /work \
+                          node:20 \
+                          node - <<'EOF'
+const { renderChecklistReference } = require('./scripts/quality/build-pr-review-assets.cjs');
+const { writeText } = require('./scripts/quality/fs-utils.cjs');
+writeText('reports/pr-review/checklist-reference.md', '# PR Review Checklist\\n\\n' + renderChecklistReference() + '\\n');
+EOF
+
+                        echo ""
+                        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                        echo "PR Review Checklist Reference (reports/pr-review/checklist-reference.md)"
+                        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                        echo ""
+                        sed -n '1,220p' reports/pr-review/checklist-reference.md || true
+                    '''
+                }
+            }
+        }
+
         // Mark the build UNSTABLE only when SonarQube reports HIGH-impact Security or Reliability findings.
         // This keeps CI "green by default" while you continuously burn down medium/maintainability issues.
         stage('Sonar Gate (High Impact)') {
