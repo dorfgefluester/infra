@@ -20,11 +20,12 @@ function parseHtml(relativePath) {
 function readPlaywrightContract() {
   const script = `
     import config from './playwright.config.js';
+    const webServers = Array.isArray(config.webServer) ? config.webServer : (config.webServer ? [config.webServer] : []);
     console.log(JSON.stringify({
       testDir: config.testDir,
       baseURL: config.use?.baseURL,
-      webServerCommand: config.webServer?.command,
-      webServerUrl: config.webServer?.url
+      webServerCommands: webServers.map((server) => server.command),
+      webServerUrls: webServers.map((server) => server.url)
     }));
   `;
 
@@ -43,9 +44,19 @@ describe('pipeline smoke contracts', () => {
 
     expect(viteConfig.server.port).toBe(3000);
     expect(playwrightContract.baseURL).toBe('http://localhost:3000');
-    expect(playwrightContract.webServerCommand).toContain('npm run dev');
-    expect(playwrightContract.webServerCommand).toContain('--strictPort');
-    expect(playwrightContract.webServerUrl).toBe('http://localhost:3000');
+    expect(playwrightContract.webServerCommands).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('node api/src/cli.js'),
+        expect.stringContaining('vite'),
+      ]),
+    );
+    expect(playwrightContract.webServerCommands.join(' ')).toContain('--strictPort');
+    expect(playwrightContract.webServerUrls).toEqual(
+      expect.arrayContaining([
+        'http://127.0.0.1:3001/api/health',
+        'http://localhost:3000',
+      ]),
+    );
     expect(playwrightContract.testDir).toBe('./tests/e2e');
   });
 
@@ -59,9 +70,26 @@ describe('pipeline smoke contracts', () => {
     expect(packageJson.scripts.lint).toBe('node scripts/quality/lint.cjs');
   });
 
+  test('jenkins bundle budget check runs in the same containerized build context', () => {
+    const jenkinsfile = readRepoFile('Jenkinsfile');
+
+    expect(jenkinsfile).toContain("cat > .jenkins-bundle-budget-check.cjs <<'EOF'");
+    expect(jenkinsfile).toContain("sh -lc 'npm run build && node ./.jenkins-bundle-budget-check.cjs'");
+    expect(jenkinsfile).toContain("trap 'rm -f .jenkins-bundle-budget-check.cjs' EXIT");
+  });
+
+  test('jenkins database migration smoke test allows slow postgres startup and runs the repo smoke script', () => {
+    const jenkinsfile = readRepoFile('Jenkinsfile');
+
+    expect(jenkinsfile).toContain("stage('Database Migration Smoke Test')");
+    expect(jenkinsfile).toContain('for _ in $(seq 1 90); do');
+    expect(jenkinsfile).toContain("sh -lc 'node scripts/quality/api-migration-smoke.cjs'");
+  });
+
   test('nginx runtime exposes health endpoints for root and prefixed deployments', () => {
     const nginxConfig = readRepoFile('nginx/default.conf');
 
+    expect(nginxConfig).toContain('location /api/');
     expect(nginxConfig).toContain('location = /health');
     expect(nginxConfig).toContain('location = /healthz');
     expect(nginxConfig).toContain('location = /dorfgefluester/health');
