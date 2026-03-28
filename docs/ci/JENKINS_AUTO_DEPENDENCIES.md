@@ -150,7 +150,7 @@ stage('Setup Build Environment')
 
 ```bash
 podman pull docker.io/owasp/dependency-check:latest &
-podman pull docker.io/aquasec/trivy:latest &
+podman pull docker.io/aquasec/trivy@sha256:7228e304ae0f610a1fad937baa463598cadac0c2ac4027cc68f3a8b997115689 &
 podman pull docker.io/returntocorp/semgrep:latest &
 wait
 ```
@@ -427,7 +427,7 @@ insecure = true
 #!/bin/bash
 podman pull docker.io/node:18-alpine
 podman pull docker.io/owasp/dependency-check:latest
-podman pull docker.io/aquasec/trivy:latest
+podman pull docker.io/aquasec/trivy@sha256:7228e304ae0f610a1fad937baa463598cadac0c2ac4027cc68f3a8b997115689
 podman pull docker.io/returntocorp/semgrep:latest
 podman pull docker.io/mcr.microsoft.com/playwright:v1.50.0-noble
 ```

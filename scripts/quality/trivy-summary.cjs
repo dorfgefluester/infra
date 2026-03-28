@@ -1,7 +1,7 @@
 const fs = require('fs');
 
 const { parseArgs } = require('./cli-args.cjs');
-const { readJson } = require('./fs-utils.cjs');
+const { readJson, writeJson, writeText } = require('./fs-utils.cjs');
 
 const SEVERITY_ORDER = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'UNKNOWN'];
 
@@ -124,6 +124,15 @@ function renderSummary({ label, summary, maxFindings, maxPackages }) {
   return lines.join('\n');
 }
 
+function maybeWriteOutputs({ outJson, outMd, summary, rendered }) {
+  if (outJson) {
+    writeJson(outJson, summary);
+  }
+  if (outMd) {
+    writeText(outMd, `${rendered}\n`);
+  }
+}
+
 function main() {
   const { args } = parseArgs(process.argv.slice(2));
   if (args.help || args.h) {
@@ -142,10 +151,24 @@ function main() {
   const label = String(args.label || 'Trivy');
   const maxFindings = Number(args['max-findings'] || 12);
   const maxPackages = Number(args['max-packages'] || 8);
+  const outJson = args['out-json'] || '';
+  const outMd = args['out-md'] || '';
   const report = readJson(inputPath);
   const summary = summarizeTrivyReport(report);
+  const rendered = renderSummary({ label, summary, maxFindings, maxPackages });
 
-  console.log(renderSummary({ label, summary, maxFindings, maxPackages }));
+  maybeWriteOutputs({ outJson, outMd, summary, rendered });
+  console.log(rendered);
 }
 
-main();
+module.exports = {
+  compareSeverity,
+  formatSeverityCounts,
+  normalizeSeverity,
+  renderSummary,
+  summarizeTrivyReport,
+};
+
+if (require.main === module) {
+  main();
+}

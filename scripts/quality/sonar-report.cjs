@@ -1,5 +1,6 @@
 const { parseArgs } = require('./cli-args.cjs');
 const { writeJson, writeText } = require('./fs-utils.cjs');
+const { resolveSonarToken } = require('./sonar-config.cjs');
 
 const DEFAULT_PROJECT_KEY = 'dorfgefluester';
 const DEFAULT_PAGE_SIZE = 100;
@@ -345,6 +346,31 @@ function renderMarkdown({
   }
   lines.push('');
 
+  lines.push('## Investigation Summary');
+  lines.push('');
+  lines.push(
+    `- High-impact reliability findings: ${relHigh?.total ?? relHigh?.issues?.length ?? 0} (${relHigh?.fallback ? 'fallback query' : 'impact query'})`,
+  );
+  lines.push(
+    `- High-impact security findings: ${secHigh?.total ?? secHigh?.issues?.length ?? 0} (${secHigh?.fallback ? 'fallback query' : 'impact query'})`,
+  );
+  lines.push(
+    `- High-impact maintainability findings: ${maintHigh?.total ?? maintHigh?.issues?.length ?? 0} (${maintHigh?.fallback ? 'fallback query' : 'impact query'})`,
+  );
+  lines.push(
+    `- Security hotspots: ${hotspots?.unavailable ? `unavailable (${hotspots.unavailable})` : hotspots?.total ?? 0}`,
+  );
+  lines.push(
+    `- Recommended next action: ${
+      (relHigh?.total ?? 0) > 0 || (secHigh?.total ?? 0) > 0
+        ? 'Address high-impact reliability/security findings before release.'
+        : (maintHigh?.total ?? 0) > 0
+          ? 'Burn down maintainability hotspots in grouped file-level batches.'
+          : 'No high-impact Sonar findings in this snapshot.'
+    }`,
+  );
+  lines.push('');
+
   lines.push('## Measures');
   lines.push('');
   lines.push(
@@ -429,7 +455,7 @@ async function main() {
   }
 
   const hostUrl = normalizeHostUrl(args['host-url'] || args.host || process.env.SONAR_HOST_URL);
-  const token = args.token || process.env.SONAR_TOKEN || process.env.SONAR_AUTH_TOKEN || '';
+  const token = resolveSonarToken(args.token);
   const projectKey =
     args['project-key'] || args.project || process.env.SONAR_PROJECT_KEY || DEFAULT_PROJECT_KEY;
 
@@ -573,7 +599,21 @@ async function main() {
   }
 }
 
-main().catch((err) => {
-  console.error(err?.stack || err?.message || String(err));
-  process.exitCode = 1;
-});
+module.exports = {
+  fetchHotspots,
+  fetchMeasures,
+  fetchQualityGate,
+  impactsFor,
+  normalizeHostUrl,
+  ratingToLetter,
+  renderMarkdown,
+  stripComponentPrefix,
+  toReportIssue,
+};
+
+if (require.main === module) {
+  main().catch((err) => {
+    console.error(err?.stack || err?.message || String(err));
+    process.exitCode = 1;
+  });
+}

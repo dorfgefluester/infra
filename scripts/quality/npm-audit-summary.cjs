@@ -126,23 +126,18 @@ function renderSummary({ label, summary, maxPackages, maxVia }) {
 
   lines.push('Top affected packages:');
   for (const pkg of summary.packageEntries.slice(0, maxPackages)) {
-    const fix = pkg.fixAvailable
-      ? typeof pkg.fixAvailable === 'object'
-        ? `fix=${pkg.fixAvailable.name || 'available'}`
-        : 'fix=available'
-      : 'fix=none';
+    const fix = formatFixAvailable(pkg.fixAvailable);
+    const rangeSuffix = pkg.range ? ` | range=${pkg.range}` : '';
     lines.push(
-      `- [${pkg.severity.toUpperCase()}] ${pkg.name} | direct=${pkg.isDirect ? 'yes' : 'no'} | via=${pkg.viaCount} | nodes=${pkg.nodes} | ${fix}${pkg.range ? ` | range=${pkg.range}` : ''}`,
+      `- [${pkg.severity.toUpperCase()}] ${pkg.name} | direct=${pkg.isDirect ? 'yes' : 'no'} | via=${pkg.viaCount} | nodes=${pkg.nodes} | ${fix}${rangeSuffix}`,
     );
   }
 
   if (summary.transitiveAdvisories.length > 0) {
     lines.push('Top advisories:');
     for (const advisory of summary.transitiveAdvisories.slice(0, maxVia)) {
-      const title = advisory.title ? ` | ${advisory.title}` : '';
-      const url = advisory.url ? ` | ${advisory.url}` : '';
       lines.push(
-        `- [${advisory.severity.toUpperCase()}] ${advisory.packageName} via ${advisory.name}${advisory.range ? ` (${advisory.range})` : ''}${title}${url}`,
+        `- [${advisory.severity.toUpperCase()}] ${advisory.packageName} via ${advisory.name}${formatAdvisoryDetails(advisory)}`,
       );
     }
   } else {
@@ -151,6 +146,32 @@ function renderSummary({ label, summary, maxPackages, maxVia }) {
 
   lines.push('Note: dependency vulnerabilities come from npm audit/package-lock.json, not native SonarQube code analysis.');
   return lines.join('\n');
+}
+
+function formatFixAvailable(fixAvailable) {
+  if (!fixAvailable) {
+    return 'fix=none';
+  }
+
+  if (typeof fixAvailable === 'object') {
+    return `fix=${fixAvailable.name || 'available'}`;
+  }
+
+  return 'fix=available';
+}
+
+function formatAdvisoryDetails(advisory) {
+  const parts = [];
+  if (advisory.range) {
+    parts.push(`(${advisory.range})`);
+  }
+  if (advisory.title) {
+    parts.push(`| ${advisory.title}`);
+  }
+  if (advisory.url) {
+    parts.push(`| ${advisory.url}`);
+  }
+  return parts.length > 0 ? ` ${parts.join(' ')}` : '';
 }
 
 function main() {

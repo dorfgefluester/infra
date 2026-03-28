@@ -23,7 +23,6 @@ async function main() {
     'tests',
     '--files-ignore-unknown=true',
     '--formatter-enabled=false',
-    '--organize-imports-enabled=false',
     '--diagnostic-level=error',
     '--reporter=summary',
   ]);

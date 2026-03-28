@@ -42,7 +42,13 @@ function sortEntries(map, valueLabel) {
     .sort((a, b) => b[valueLabel] - a[valueLabel] || a.name.localeCompare(b.name));
 }
 
-function summarizeFiles({ issues = [], hotspots = [], reliabilityHigh = [], securityHigh = [], maintainabilityHigh = [] }) {
+function summarizeFiles({
+  issues = [],
+  hotspots = [],
+  reliabilityHigh = [],
+  securityHigh = [],
+  maintainabilityHigh = [],
+} = {}) {
   const files = new Map();
 
   function getEntry(file) {
@@ -146,6 +152,20 @@ function createTask({ id, title, priority, rationale, nextAction, count, files =
     count,
     files: files.filter(Boolean),
     rules: rules.filter(Boolean),
+  };
+}
+
+function buildTotals({ issuesPayload, report, issues, hotspots, reliabilityHigh, securityHigh, maintainabilityHigh }) {
+  return {
+    openIssues: issuesPayload?.summary?.total || issues.length,
+    bugs: Number(issuesPayload?.measures?.bugs ?? 0),
+    vulnerabilities: Number(issuesPayload?.measures?.vulnerabilities ?? 0),
+    codeSmells: Number(issuesPayload?.measures?.code_smells ?? 0),
+    securityHotspots: Number(report?.totals?.hotspots ?? hotspots.length),
+    reliabilityHigh: Number(report?.totals?.reliability_high ?? reliabilityHigh.length),
+    reliabilityMedium: Number(report?.totals?.reliability_medium ?? 0),
+    securityHigh: Number(report?.totals?.security_high ?? securityHigh.length),
+    maintainabilityHigh: Number(report?.totals?.maintainability_high ?? maintainabilityHigh.length),
   };
 }
 
@@ -257,17 +277,15 @@ function buildPlanningSummary({ issuesPayload, report }) {
     hostUrl: report?.hostUrl || issuesPayload?.hostUrl || null,
     projectKey: report?.projectKey || issuesPayload?.projectKey || null,
     qualityGateStatus: report?.qualityGate?.status || null,
-    totals: {
-      openIssues: issuesPayload?.summary?.total || issues.length,
-      bugs: Number(issuesPayload?.measures?.bugs ?? 0),
-      vulnerabilities: Number(issuesPayload?.measures?.vulnerabilities ?? 0),
-      codeSmells: Number(issuesPayload?.measures?.code_smells ?? 0),
-      securityHotspots: Number(report?.totals?.hotspots ?? hotspots.length),
-      reliabilityHigh: Number(report?.totals?.reliability_high ?? reliabilityHigh.length),
-      reliabilityMedium: Number(report?.totals?.reliability_medium ?? 0),
-      securityHigh: Number(report?.totals?.security_high ?? securityHigh.length),
-      maintainabilityHigh: Number(report?.totals?.maintainability_high ?? maintainabilityHigh.length),
-    },
+    totals: buildTotals({
+      issuesPayload,
+      report,
+      issues,
+      hotspots,
+      reliabilityHigh,
+      securityHigh,
+      maintainabilityHigh,
+    }),
     topAreas: topAreas.slice(0, 10),
     topFiles: topFiles.slice(0, 12),
     topRules: topRules.slice(0, 12),
@@ -408,6 +426,7 @@ if (require.main === module) {
 
 module.exports = {
   buildPlanningSummary,
+  buildTotals,
   renderPlanningMarkdown,
   summarizeFiles,
   summarizeRules,
