@@ -29,8 +29,7 @@ async function retryMigrationPass(runMigrationPass, attempts = 6, delayMs = 2000
 
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      await runMigrationPass();
-      return;
+      return await runMigrationPass();
     } catch (error) {
       lastError = error;
       if (attempt === attempts) {
