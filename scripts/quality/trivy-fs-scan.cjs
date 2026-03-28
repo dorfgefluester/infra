@@ -343,9 +343,11 @@ function assertPathInsideCwd(inputPath, label, { allowCwd = false } = {}) {
   }
 
   const cwd = process.cwd();
-  const resolvedPath = path.resolve(cwd, normalizedPath);
+  if (pathSegments.length === 0) {
+    return cwd;
+  }
 
-  return pathSegments.length === 0 ? cwd : resolvedPath;
+  return `${cwd.replace(/[\\/]+$/, '')}${path.sep}${pathSegments.join(path.sep)}`;
 }
 
 function writeFindingsArtifacts({ outJson, outSummary, outMd, maxList }) {
