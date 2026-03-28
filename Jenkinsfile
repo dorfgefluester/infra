@@ -98,19 +98,6 @@ pipeline {
             }
         }
 
-        // Reset workspace contents before checkout to recover from stale root-owned files across runs.
-        stage('Prepare Workspace') {
-            when {
-                expression { return env.BUILD_ALLOWED == 'true' }
-            }
-            steps {
-                sh '''
-                    docker run --rm -u root:root -v "$WORKSPACE:/ws" node:20 \
-                      sh -lc 'find /ws -mindepth 1 -maxdepth 1 -exec rm -rf {} +'
-                '''
-            }
-        }
-
         // Run compile, lint, tests, and optional E2E from the Jenkins agent while executing
         // the Node-based workload itself in short-lived Docker containers. This keeps the
         // runtime consistent with dependency installation/build (Node 20) without relying on
