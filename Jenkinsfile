@@ -7,7 +7,7 @@ pipeline {
     }
 
     options {
-        buildDiscarder(logRotator(numToKeepStr: '30', artifactNumToKeepStr: '10'))
+        buildDiscarder(logRotator(daysToKeepStr: '7', numToKeepStr: '10', artifactDaysToKeepStr: '7', artifactNumToKeepStr: '5'))
         timeout(time: 45, unit: 'MINUTES')
         timestamps()
         disableConcurrentBuilds()
@@ -1342,9 +1342,18 @@ exit 0
 	        always {
 	            // Persist scan outputs for backlog triage (SonarQube issues export, Trivy JSON reports, etc.).
 	            archiveArtifacts artifacts: 'reports/**/*,report-task.txt', fingerprint: false, allowEmptyArchive: true
-	            // Skip cleanWs to preserve "$WORKSPACE@tmp" caches (npm/trivy) for faster subsequent builds.
-	            // The workspace root itself is wiped at the start of each build in "Prepare Workspace".
-            echo 'Skipping cleanWs to keep per-workspace caches.'
+	            // Keep the current job cache outside the workspace root, but prune stale sibling caches
+	            // so multibranch jobs do not keep accumulating npm/trivy/buildx data forever.
+	            sh '''
+	                set +e
+	                mkdir -p "$CACHE_ROOT"
+	                touch "$JOB_CACHE_TOUCH_FILE"
+	                find "$CACHE_ROOT" -mindepth 1 -maxdepth 1 -type d ! -path "$JOB_CACHE_DIR" -mtime +7 -print | while read -r stale_dir; do
+	                  [ -n "$stale_dir" ] || continue
+	                  rm -rf "$stale_dir"
+	                done
+	            '''
+	            cleanWs(deleteDirs: true, disableDeferredWipeout: true, notFailBuild: true)
         }
     }
 }
