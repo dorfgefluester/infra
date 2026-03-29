@@ -1474,7 +1474,7 @@ exit 0
 	                touch "$JOB_CACHE_TOUCH_FILE"
 	                find "$CACHE_ROOT" -mindepth 1 -maxdepth 1 -type d ! -path "$JOB_CACHE_DIR" -mtime +7 -print | while read -r stale_dir; do
 	                  [ -n "$stale_dir" ] || continue
-	                  rm -rf "$stale_dir"
+	                  rm -rf "$stale_dir" || true
 	                done
 	            '''
 	            cleanWs(deleteDirs: true, disableDeferredWipeout: true, notFailBuild: true)
