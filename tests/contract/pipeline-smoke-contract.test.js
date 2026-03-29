@@ -75,7 +75,7 @@ describe('pipeline smoke contracts', () => {
 
     expect(jenkinsfile).toContain('node scripts/quality/check-bundle-budget.cjs');
     expect(jenkinsfile).toContain("sh -lc 'npm run build && node scripts/quality/check-bundle-budget.cjs");
-    expect(jenkinsfile).not.toContain(".jenkins-bundle-budget-check.cjs");
+    expect(jenkinsfile).not.toContain('.jenkins-bundle-budget-check.cjs');
   });
 
   test('jenkins database migration smoke test allows slow postgres startup and runs the repo smoke script', () => {
@@ -83,6 +83,9 @@ describe('pipeline smoke contracts', () => {
 
     expect(jenkinsfile).toContain("stage('Database Migration Smoke Test')");
     expect(jenkinsfile).toContain('for _ in $(seq 1 90); do');
+    expect(jenkinsfile).toContain('docker network create "$migration_db_network"');
+    expect(jenkinsfile).toContain('--network "$migration_db_network"');
+    expect(jenkinsfile).toContain('@${migration_db_container}:5432/dorfgefluester');
     expect(jenkinsfile).toContain("sh -lc 'node scripts/quality/api-migration-smoke.cjs'");
   });
 
