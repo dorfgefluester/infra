@@ -743,7 +743,10 @@ exit 0
                         script {
                             def hasHelm = sh(script: 'command -v helm >/dev/null 2>&1', returnStatus: true) == 0
                             if (hasHelm) {
-                                sh 'helm lint helm/dorfgefluester'
+                                sh '''
+                                  helm lint helm/dorfgefluester
+                                  helm lint helm/dorfgefluester -f helm/dorfgefluester/values-staging.yaml
+                                '''
                             } else {
                                 echo 'Helm not found on agent; skipping Helm Lint.'
                             }
@@ -767,6 +770,17 @@ exit 0
                                     --set api.env.appOrigin=http://dorf.test \
                                     --set ingress.host=dorf.test > /tmp/${RELEASE}-rendered.yaml
                                   kubectl apply --dry-run=client -f /tmp/${RELEASE}-rendered.yaml
+                                  helm template ${RELEASE}-staging helm/dorfgefluester \
+                                    --namespace staging \
+                                    -f helm/dorfgefluester/values.yaml \
+                                    -f helm/dorfgefluester/values-staging.yaml \
+                                    --set web.image.repository=${IMAGE_REPO} \
+                                    --set web.image.tag=ci-dry-run \
+                                    --set api.image.repository=${API_IMAGE_REPO} \
+                                    --set api.image.tag=ci-dry-run \
+                                    --set api.env.appOrigin=http://dorf.test \
+                                    --set ingress.host=dorf.test > /tmp/${RELEASE}-staging-rendered.yaml
+                                  kubectl apply --dry-run=client -f /tmp/${RELEASE}-staging-rendered.yaml
                                 """
                             } else {
                                 echo 'Helm or kubectl not found on agent; skipping Helm Render (Dry Run).'

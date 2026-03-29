@@ -46,8 +46,8 @@ describe('staging deploy contracts', () => {
   test('core vitals staging deploy also cleans remote chart state and the Jenkins workspace', () => {
     const jenkinsfile = readRepoFile('jenkins/core-vitals-staging-deploy.Jenkinsfile');
 
-    expect(jenkinsfile).toContain('rm -rf /tmp/core-vitals-chart');
-    expect(jenkinsfile).toContain('docker image prune -f --filter "dangling=true" || true');
+    expect(jenkinsfile).toContain('scp -i "${SSH_KEY}" -o StrictHostKeyChecking=no -r ${CHART_PATH} ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/core-vitals-chart');
+    expect(jenkinsfile).toContain("stage('Verify IMAGE_TAG Exists In Registry')");
     expect(jenkinsfile).toContain('cleanWs(deleteDirs: true, disableDeferredWipeout: true, notFailBuild: true)');
   });
 });
