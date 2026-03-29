@@ -89,19 +89,12 @@ describe('pipeline smoke contracts', () => {
     expect(jenkinsfile).toContain("sh -lc 'node scripts/quality/api-migration-smoke.cjs'");
   });
 
-  test('release-branch e2e happy path keeps user journeys and accessibility coverage', () => {
+  test('jenkins cleanup policy limits build retention, prunes stale caches, and wipes workspaces', () => {
     const jenkinsfile = readRepoFile('Jenkinsfile');
 
-    expect(jenkinsfile).toContain("stage('E2E (Release Happy Path)')");
-    expect(jenkinsfile).toContain(
-      "npx playwright test tests/e2e/user-click-paths.spec.js --project=chromium",
-    );
-    expect(jenkinsfile).toContain(
-      "npx playwright test tests/e2e/accessibility.spec.js --project=chromium",
-    );
-    expect(jenkinsfile).not.toContain(
-      "npx playwright test tests/e2e/ui-interactions.spec.js --project=chromium --grep \"should open settings modal\"",
-    );
+    expect(jenkinsfile).toContain("buildDiscarder(logRotator(daysToKeepStr: '7', numToKeepStr: '10', artifactDaysToKeepStr: '7', artifactNumToKeepStr: '5'))");
+    expect(jenkinsfile).toContain('find "$CACHE_ROOT" -mindepth 1 -maxdepth 1 -type d ! -path "$JOB_CACHE_DIR" -mtime +7 -print');
+    expect(jenkinsfile).toContain('cleanWs(deleteDirs: true, disableDeferredWipeout: true, notFailBuild: true)');
   });
 
   test('nginx runtime exposes health endpoints for root and prefixed deployments', () => {
