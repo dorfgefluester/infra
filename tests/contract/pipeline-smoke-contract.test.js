@@ -86,6 +86,21 @@ describe('pipeline smoke contracts', () => {
     expect(jenkinsfile).toContain("sh -lc 'node scripts/quality/api-migration-smoke.cjs'");
   });
 
+  test('release-branch e2e happy path keeps user journeys and accessibility coverage', () => {
+    const jenkinsfile = readRepoFile('Jenkinsfile');
+
+    expect(jenkinsfile).toContain("stage('E2E (Release Happy Path)')");
+    expect(jenkinsfile).toContain(
+      "npx playwright test tests/e2e/user-click-paths.spec.js --project=chromium",
+    );
+    expect(jenkinsfile).toContain(
+      "npx playwright test tests/e2e/accessibility.spec.js --project=chromium",
+    );
+    expect(jenkinsfile).not.toContain(
+      "npx playwright test tests/e2e/ui-interactions.spec.js --project=chromium --grep \"should open settings modal\"",
+    );
+  });
+
   test('nginx runtime exposes health endpoints for root and prefixed deployments', () => {
     const nginxConfig = readRepoFile('nginx/default.conf');
 
