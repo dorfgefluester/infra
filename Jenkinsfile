@@ -1123,6 +1123,14 @@ exit 0
                             def trivyDbMetadata = "${trivyCacheDir}/db/metadata.json"
                             def trivyDbTimestamp = "${trivyCacheDir}/.db-updated-at"
                             def trivyDbTtlSeconds = 12 * 60 * 60
+                            def trivyDbRefreshTimeoutSeconds = 180
+                            def cachedDbAvailable = sh(
+                                script: """
+                                    set -eu
+                                    [ -s '${trivyDbMetadata}' ]
+                                """,
+                                returnStatus: true
+                            ) == 0
                             def shouldRefreshDb = sh(
                                 script: """
                                     set -eu
@@ -1140,10 +1148,11 @@ exit 0
                             if (shouldRefreshDb) {
                                 def dbReady = false
                                 for (def repo : dbRepos) {
-                                    echo "Refreshing Trivy DB from ${repo}..."
+                                    echo "Refreshing Trivy DB from ${repo} (timeout ${trivyDbRefreshTimeoutSeconds}s)..."
                                     def dbStatus = sh(
                                         script: """
-                                            docker run --rm \
+                                            timeout '${trivyDbRefreshTimeoutSeconds}' \
+                                              docker run --rm \
                                               -v '${trivyCacheDir}:/tmp/trivy-cache' \
                                               '${env.TRIVY_IMAGE}' image \
                                               --cache-dir /tmp/trivy-cache \
@@ -1157,9 +1166,16 @@ exit 0
                                         dbReady = true
                                         break
                                     }
+                                    echo "Trivy DB refresh from ${repo} failed with exit code ${dbStatus}."
                                 }
                                 if (!dbReady) {
-                                    error('Unable to download Trivy vulnerability DB from configured repositories.')
+                                    if (cachedDbAvailable) {
+                                        echo 'Unable to refresh Trivy vulnerability DB from configured repositories; continuing with the previously cached DB.'
+                                    } else {
+                                        echo 'Unable to prepare a Trivy vulnerability DB; skipping image scan instead of blocking the whole pipeline.'
+                                        writeFile file: 'reports/trivy/image-scan-skipped.md', text: 'Trivy image scan skipped because no vulnerability DB could be downloaded and no cached DB was available.\n'
+                                        return
+                                    }
                                 }
                             } else {
                                 echo 'Using cached Trivy DB (fresh enough for this build).'
