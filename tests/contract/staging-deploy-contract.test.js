@@ -21,6 +21,7 @@ describe('staging deploy contracts', () => {
     expect(jenkinsfile).toContain('url="http://${REGISTRY_HOST}/v2/${image}/tags/list"');
     expect(jenkinsfile).toContain('echo "== $image =="');
     expect(jenkinsfile).toContain('curl -fsS "http://${REGISTRY_HOST}/v2/${image}/tags/list" || true');
+    expect(jenkinsfile).not.toContain("url='http://${REGISTRY_HOST}/v2/'");
   });
 
   test('staging deploy cleanup always removes temp chart state and cleans the workspace', () => {
@@ -45,6 +46,7 @@ describe('staging deploy contracts', () => {
     expect(jenkinsfile).toContain('curl -fsS "http://${REGISTRY_HOST}/v2/${image}/tags/list" || true');
     expect(jenkinsfile).toContain('rm -rf /tmp/dorfgefluester-chart');
     expect(jenkinsfile).toContain('cleanWs(deleteDirs: true, disableDeferredWipeout: true, notFailBuild: true)');
+    expect(jenkinsfile).not.toContain("url='http://${REGISTRY_HOST}/v2/'");
   });
 
   test('core vitals staging deploy also cleans remote chart state and the Jenkins workspace', () => {
