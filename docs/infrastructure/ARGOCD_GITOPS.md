@@ -6,10 +6,10 @@ This is the target staging workflow for `dorfgefluester` on `dev-env-01`.
 
 - Helm chart path: `helm/dorfgefluester`
 - Staging values file: `helm/dorfgefluester/values-staging.yaml`
-- Staging namespace: `staging`
+- Staging namespace: `dorfgefluester`
 - Staging ingress URL: `http://dev-env-01/dorfgefluester/`
 - Runtime database secret expected by the chart: `dorfgefluester-postgres`
-- Argo CD runs on the same k3s cluster, so no external cluster registration is required for staging
+- Argo CD runs on `argocd-01` and deploys to the remote k3s cluster on `dev-env-01`
 
 ## Desired GitOps Flow
 
@@ -57,10 +57,11 @@ Log in with the CLI:
 argocd login argocd-01 --grpc-web --grpc-web-root-path /argocd --plaintext
 ```
 
-Apply the staging application manifest from this repo:
+Verify the remote cluster is registered in Argo CD and apply the staging application manifest:
 
 ```bash
-kubectl apply -f argocd/applications/dorfgefluester-staging.yaml
+argocd cluster list
+sudo k3s kubectl apply -f argocd/applications/dorfgefluester-staging.yaml
 argocd app get dorfgefluester-staging
 argocd app diff dorfgefluester-staging
 ```
@@ -96,13 +97,13 @@ apiVersion: v1
 kind: Secret
 metadata:
   name: dorfgefluester-postgres
-  namespace: staging
+  namespace: dorfgefluester
 type: Opaque
 stringData:
   postgres-db: dorfgefluester
   postgres-user: dorfgefluester
   postgres-password: REPLACE_ME
-  database-url: postgres://dorfgefluester:REPLACE_ME@dev-env-01:5432/dorfgefluester
+  database-url: postgres://dorfgefluester:REPLACE_ME@dorfgefluester-postgres:5432/dorfgefluester
 EOF
 ```
 
@@ -121,14 +122,17 @@ git commit -m "Add Argo CD staging app and sealed secret"
 git push
 ```
 
-### Host: `argocd-01`
+### Host: `dev-env-01`
 
-Apply the sealed secret from the updated repo checkout:
+Apply the sealed secret on the target cluster:
 
 ```bash
-kubectl apply -f argocd/sealed-secrets/dorfgefluester-postgres.sealedsecret.yaml
-kubectl -n staging get sealedsecret,secrets | grep dorfgefluester-postgres
+sudo k3s kubectl create namespace dorfgefluester --dry-run=client -o yaml | sudo k3s kubectl apply -f -
+sudo k3s kubectl apply -f /tmp/dorfgefluester-postgres.sealedsecret.yaml
+sudo k3s kubectl -n dorfgefluester get sealedsecret,secrets | grep dorfgefluester-postgres
 ```
+
+### Host: `argocd-01`
 
 Refresh and inspect the Argo app:
 
@@ -149,8 +153,8 @@ argocd app wait dorfgefluester-staging --health --sync
 Verify the rollout:
 
 ```bash
-sudo k3s kubectl -n staging get all
-sudo k3s kubectl -n staging get ingress
+sudo k3s kubectl -n dorfgefluester get all
+sudo k3s kubectl -n dorfgefluester get ingress
 curl -I http://dev-env-01/dorfgefluester/
 curl -fsS http://dev-env-01/dorfgefluester/healthz
 curl -fsS http://dev-env-01/dorfgefluester/api/health
@@ -159,10 +163,10 @@ curl -fsS http://dev-env-01/dorfgefluester/api/health
 If a rollout is unhealthy:
 
 ```bash
-sudo k3s kubectl -n staging describe deploy dorfgefluester
-sudo k3s kubectl -n staging get pods
-sudo k3s kubectl -n staging logs deploy/dorfgefluester -c api --previous
-sudo k3s kubectl -n staging logs deploy/dorfgefluester -c web --previous
+sudo k3s kubectl -n dorfgefluester describe deploy dorfgefluester
+sudo k3s kubectl -n dorfgefluester get pods
+sudo k3s kubectl -n dorfgefluester logs deploy/dorfgefluester -c api --previous
+sudo k3s kubectl -n dorfgefluester logs deploy/dorfgefluester -c web --previous
 ```
 
 ## Jenkins Follow-Up
