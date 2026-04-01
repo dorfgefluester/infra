@@ -43,11 +43,11 @@ describe('staging deploy contracts', () => {
     expect(jenkinsfile).toContain('cleanWs(deleteDirs: true, disableDeferredWipeout: true, notFailBuild: true)');
   });
 
-  test('core vitals staging deploy also cleans remote chart state and the Jenkins workspace', () => {
-    const jenkinsfile = readRepoFile('jenkins/core-vitals-staging-deploy.Jenkinsfile');
+  test('main Jenkinsfile only skips builds when the dorfgefluester staging deploy pipeline alone changed', () => {
+    const jenkinsfile = readRepoFile('Jenkinsfile');
 
-    expect(jenkinsfile).toContain('scp -i "${SSH_KEY}" -o StrictHostKeyChecking=no -r ${CHART_PATH} ${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/core-vitals-chart');
-    expect(jenkinsfile).toContain("stage('Verify IMAGE_TAG Exists In Registry')");
-    expect(jenkinsfile).toContain('cleanWs(deleteDirs: true, disableDeferredWipeout: true, notFailBuild: true)');
+    expect(jenkinsfile).toContain("def deployPipelinePath = 'jenkins/dorfgefluester-staging-deploy.Jenkinsfile'");
+    expect(jenkinsfile).toContain('if (changedPath != deployPipelinePath)');
+    expect(jenkinsfile).toContain('echo "Skipping build: only ${deployPipelinePath} changed."');
   });
 });

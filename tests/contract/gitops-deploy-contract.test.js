@@ -13,9 +13,11 @@ describe('gitops deploy contract', () => {
   test('helm chart exposes shared defaults plus staging and production overlays', () => {
     expect(readRepoFile('helm/dorfgefluester/Chart.yaml')).toContain('name: dorfgefluester');
     expect(readRepoFile('helm/dorfgefluester/values.yaml')).toContain('fullnameOverride: dorfgefluester');
-    expect(readRepoFile('helm/dorfgefluester/values-staging.yaml')).toContain('namespace: staging');
+    expect(readRepoFile('helm/dorfgefluester/values-staging.yaml')).toContain('namespace: dorfgefluester');
     expect(readRepoFile('helm/dorfgefluester/values-staging.yaml')).toContain('deploymentMode: monolith');
-    expect(readRepoFile('helm/dorfgefluester/values-staging.yaml')).toContain('enabled: false');
+    expect(readRepoFile('helm/dorfgefluester/values-staging.yaml')).toContain('enabled: true');
+    expect(readRepoFile('helm/dorfgefluester/values-staging.yaml')).toContain('tag: master-latest');
+    expect(readRepoFile('helm/dorfgefluester/values-staging.yaml')).toContain('pullPolicy: Always');
     expect(readRepoFile('helm/dorfgefluester/values-production.yaml')).toContain('namespace: production');
   });
 

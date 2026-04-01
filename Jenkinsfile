@@ -59,7 +59,7 @@ pipeline {
                     }
 
                     if (env.BUILD_ALLOWED == 'true') {
-                        def deployPipelinePath = 'jenkins/core-vitals-staging-deploy.Jenkinsfile'
+                        def deployPipelinePath = 'jenkins/dorfgefluester-staging-deploy.Jenkinsfile'
                         def changedPaths = []
 
                         try {
