@@ -86,6 +86,7 @@ describe('pipeline smoke contracts', () => {
     expect(jenkinsfile).toContain('for _ in $(seq 1 90); do');
     expect(jenkinsfile).toContain('docker network create "$migration_db_network"');
     expect(jenkinsfile).toContain('--network "$migration_db_network"');
+    expect(jenkinsfile).toContain('pg_isready -h "$migration_db_container" -U dorfgefluester -d dorfgefluester');
     expect(jenkinsfile).toContain('@${migration_db_container}:5432/dorfgefluester');
     expect(jenkinsfile).toContain("sh -lc 'node scripts/quality/api-migration-smoke.cjs'");
   });

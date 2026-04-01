@@ -212,7 +212,9 @@ pipeline {
                                 docker logs "$migration_db_container" || true
                                 exit 1
                               fi
-                              if docker exec "$migration_db_container" pg_isready -U dorfgefluester -d dorfgefluester >/dev/null 2>&1; then
+                              if docker run --rm --network "$migration_db_network" postgres:16-alpine \
+                                pg_isready -h "$migration_db_container" -U dorfgefluester -d dorfgefluester \
+                                >/dev/null 2>&1; then
                                 ready=1
                                 break
                               fi
