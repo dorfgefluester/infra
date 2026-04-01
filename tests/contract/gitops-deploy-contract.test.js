@@ -21,6 +21,14 @@ describe('gitops deploy contract', () => {
     expect(readRepoFile('helm/dorfgefluester/values-production.yaml')).toContain('namespace: production');
   });
 
+  test('argocd staging application tracks master for manual post-jenkins deployments', () => {
+    const appManifest = readRepoFile('argocd/applications/dorfgefluester-staging.yaml');
+
+    expect(appManifest).toContain('name: dorfgefluester-staging');
+    expect(appManifest).toContain('targetRevision: master');
+    expect(appManifest).toContain('namespace: dorfgefluester');
+  });
+
   test('helm templates support staging monolith mode and keep secrets outside git-managed manifests', () => {
     const monolithDeployment = readRepoFile('helm/dorfgefluester/templates/deployment.yaml');
     const monolithService = readRepoFile('helm/dorfgefluester/templates/service.yaml');

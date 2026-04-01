@@ -13,14 +13,17 @@ This is the target staging workflow for `dorfgefluester` on `dev-env-01`.
 
 ## Desired GitOps Flow
 
-1. Jenkins builds and pushes immutable image tags.
-2. Jenkins updates `helm/dorfgefluester/values-staging.yaml` with the new image tag(s).
-3. Argo CD detects the Git change and shows `OutOfSync`.
-4. Review the Argo CD diff.
-5. Run a manual sync.
-6. Verify the rollout on `dev-env-01`.
+1. Manually merge the release branch into `master`.
+2. Jenkins builds `master` and pushes immutable image tags.
+3. Jenkins updates `helm/dorfgefluester/values-staging.yaml` on `master` with the new image tag(s).
+4. Argo CD detects the Git change on `master` and shows `OutOfSync`.
+5. Review the Argo CD diff.
+6. Run a manual sync.
+7. Verify the rollout on `dev-env-01`.
 
 Argo CD does not deploy "latest image in the registry" by itself. A Git change must drive the deployment.
+
+The staging Argo application must track `master`, not a release branch, if `master` is your deployment branch.
 
 ## Required Repo Manifests
 
@@ -64,6 +67,12 @@ argocd cluster list
 sudo k3s kubectl apply -f argocd/applications/dorfgefluester-staging.yaml
 argocd app get dorfgefluester-staging
 argocd app diff dorfgefluester-staging
+```
+
+Confirm the app tracks `master`:
+
+```bash
+argocd app get dorfgefluester-staging | rg "Target:|Helm Values:"
 ```
 
 Keep sync manual for the first rollout:
