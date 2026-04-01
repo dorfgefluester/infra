@@ -14,17 +14,27 @@ describe('gitops deploy contract', () => {
     expect(readRepoFile('helm/dorfgefluester/Chart.yaml')).toContain('name: dorfgefluester');
     expect(readRepoFile('helm/dorfgefluester/values.yaml')).toContain('fullnameOverride: dorfgefluester');
     expect(readRepoFile('helm/dorfgefluester/values-staging.yaml')).toContain('namespace: staging');
+    expect(readRepoFile('helm/dorfgefluester/values-staging.yaml')).toContain('deploymentMode: monolith');
+    expect(readRepoFile('helm/dorfgefluester/values-staging.yaml')).toContain('enabled: false');
     expect(readRepoFile('helm/dorfgefluester/values-production.yaml')).toContain('namespace: production');
   });
 
-  test('helm templates are values-driven and keep secrets outside git-managed manifests', () => {
+  test('helm templates support staging monolith mode and keep secrets outside git-managed manifests', () => {
+    const monolithDeployment = readRepoFile('helm/dorfgefluester/templates/deployment.yaml');
+    const monolithService = readRepoFile('helm/dorfgefluester/templates/service.yaml');
+    const monolithNginxConfig = readRepoFile('helm/dorfgefluester/templates/monolith-nginx-config.yaml');
     const apiDeployment = readRepoFile('helm/dorfgefluester/templates/api-deployment.yaml');
     const webDeployment = readRepoFile('helm/dorfgefluester/templates/web-deployment.yaml');
     const ingress = readRepoFile('helm/dorfgefluester/templates/ingress.yaml');
 
+    expect(monolithDeployment).toContain('{{- if eq .Values.deploymentMode "monolith" }}');
+    expect(monolithService).toContain('{{- if eq .Values.deploymentMode "monolith" }}');
+    expect(monolithNginxConfig).toContain('proxy_pass http://127.0.0.1:3001/api/;');
     expect(apiDeployment).toContain('name: {{ include "dorfgefluester.apiName" . }}');
+    expect(apiDeployment).toContain('{{- if ne .Values.deploymentMode "monolith" }}');
     expect(apiDeployment).toContain('name: {{ .Values.api.runtimeSecret.name | quote }}');
     expect(webDeployment).toContain('name: {{ include "dorfgefluester.webName" . }}');
+    expect(webDeployment).toContain('{{- if ne .Values.deploymentMode "monolith" }}');
     expect(ingress).toContain('name: {{ include "dorfgefluester.fullname" . }}');
     expect(fs.existsSync(path.join(rootDir, 'helm/dorfgefluester/templates/postgres-secret.yaml'))).toBe(false);
   });

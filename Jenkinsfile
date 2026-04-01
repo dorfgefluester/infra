@@ -179,19 +179,39 @@ pipeline {
                 stage('Database Migration Smoke Test') {
                     steps {
                         sh '''
-                            migration_db_port=55432
                             migration_db_container="dorfgefluester-migration-smoke-${BUILD_NUMBER}"
-                            trap 'docker rm -f "$migration_db_container" >/dev/null 2>&1 || true' EXIT
+                            migration_db_network="dorfgefluester-migration-smoke-net-${BUILD_NUMBER}"
+                            cleanup() {
+                              status=$?
+                              if [ "$status" != "0" ]; then
+                                echo "Migration smoke diagnostics for $migration_db_container"
+                                docker ps -a --filter "name=$migration_db_container" || true
+                                docker logs "$migration_db_container" || true
+                                docker inspect "$migration_db_container" || true
+                              fi
+                              docker rm -f "$migration_db_container" >/dev/null 2>&1 || true
+                              docker network rm "$migration_db_network" >/dev/null 2>&1 || true
+                              exit "$status"
+                            }
+                            trap cleanup EXIT
                             docker rm -f "$migration_db_container" >/dev/null 2>&1 || true
+                            docker network rm "$migration_db_network" >/dev/null 2>&1 || true
+                            docker network create "$migration_db_network" >/dev/null
                             docker run -d --rm \
                               --name "$migration_db_container" \
+                              --network "$migration_db_network" \
                               -e POSTGRES_DB=dorfgefluester \
                               -e POSTGRES_USER=dorfgefluester \
                               -e POSTGRES_PASSWORD=dorfgefluester-ci \
-                              -p 127.0.0.1:${migration_db_port}:5432 \
                               postgres:16-alpine >/dev/null
                             ready=0
                             for _ in $(seq 1 90); do
+                              if ! docker ps --format '{{.Names}}' | grep -Fx "$migration_db_container" >/dev/null 2>&1; then
+                                echo "ERROR: postgres migration smoke container exited before readiness."
+                                docker ps -a --filter "name=$migration_db_container" || true
+                                docker logs "$migration_db_container" || true
+                                exit 1
+                              fi
                               if docker exec "$migration_db_container" pg_isready -U dorfgefluester -d dorfgefluester >/dev/null 2>&1; then
                                 ready=1
                                 break
@@ -203,10 +223,10 @@ pipeline {
                               echo "ERROR: postgres migration smoke container did not become ready."
                               exit 1
                             fi
-                            docker run --rm --network host -u "$(id -u):$(id -g)" \
+                            docker run --rm --network "$migration_db_network" -u "$(id -u):$(id -g)" \
                               -v "$WORKSPACE:/work" -w /work \
                               -e HOME=/tmp \
-                              -e DATABASE_URL="postgres://dorfgefluester:dorfgefluester-ci@127.0.0.1:${migration_db_port}/dorfgefluester" \
+                              -e DATABASE_URL="postgres://dorfgefluester:dorfgefluester-ci@${migration_db_container}:5432/dorfgefluester" \
                               node:20 \
                               sh -lc 'node scripts/quality/api-migration-smoke.cjs'
                         '''
@@ -743,7 +763,10 @@ exit 0
                         script {
                             def hasHelm = sh(script: 'command -v helm >/dev/null 2>&1', returnStatus: true) == 0
                             if (hasHelm) {
-                                sh 'helm lint helm/dorfgefluester'
+                                sh '''
+                                  helm lint helm/dorfgefluester
+                                  helm lint helm/dorfgefluester -f helm/dorfgefluester/values-staging.yaml
+                                '''
                             } else {
                                 echo 'Helm not found on agent; skipping Helm Lint.'
                             }
@@ -767,6 +790,17 @@ exit 0
                                     --set api.env.appOrigin=http://dorf.test \
                                     --set ingress.host=dorf.test > /tmp/${RELEASE}-rendered.yaml
                                   kubectl apply --dry-run=client -f /tmp/${RELEASE}-rendered.yaml
+                                  helm template ${RELEASE}-staging helm/dorfgefluester \
+                                    --namespace staging \
+                                    -f helm/dorfgefluester/values.yaml \
+                                    -f helm/dorfgefluester/values-staging.yaml \
+                                    --set web.image.repository=${IMAGE_REPO} \
+                                    --set web.image.tag=ci-dry-run \
+                                    --set api.image.repository=${API_IMAGE_REPO} \
+                                    --set api.image.tag=ci-dry-run \
+                                    --set api.env.appOrigin=http://dorf.test \
+                                    --set ingress.host=dorf.test > /tmp/${RELEASE}-staging-rendered.yaml
+                                  kubectl apply --dry-run=client -f /tmp/${RELEASE}-staging-rendered.yaml
                                 """
                             } else {
                                 echo 'Helm or kubectl not found on agent; skipping Helm Render (Dry Run).'
@@ -870,6 +904,80 @@ exit 0
                         '''
                     }
                 }
+            }
+        }
+
+        stage('PR Review Artifacts') {
+            when {
+                allOf {
+                    expression { return env.BUILD_ALLOWED == 'true' }
+                    expression { return env.CHANGE_ID?.trim() }
+                }
+            }
+            steps {
+                catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
+                    sh '''
+                        set -e
+                        mkdir -p reports/pr-review
+
+                        target_ref="${CHANGE_TARGET:-master}"
+                        git fetch --no-tags origin "$target_ref"
+
+                        repo_id="$(git config --get remote.origin.url || printf '%s' "${JOB_NAME}")"
+                        base_sha="$(git merge-base HEAD "origin/$target_ref")"
+                        head_sha="$(git rev-parse HEAD)"
+                        head_ref="${CHANGE_BRANCH:-${BRANCH_NAME}}"
+
+                        docker run --rm -u "$(id -u):$(id -g)" \
+                          -v "$WORKSPACE:/work" -w /work \
+                          node:20 \
+                          node scripts/quality/build-pr-review-assets.cjs \
+                            --repo-root /work \
+                            --prompt-template .github/codex/review-prompt.md \
+                            --output-prompt reports/pr-review/codex-prompt.md \
+                            --output-schema reports/pr-review/codex-schema.json \
+                            --repository "$repo_id" \
+                            --pr-number "${CHANGE_ID}" \
+                            --base-ref "$target_ref" \
+                            --head-ref "$head_ref" \
+                            --base-sha "$base_sha" \
+                            --head-sha "$head_sha"
+
+                        docker run --rm -u "$(id -u):$(id -g)" \
+                          -v "$WORKSPACE:/work" -w /work \
+                          node:20 \
+                          node scripts/quality/write-pr-review-checklist-reference.cjs
+
+                        echo ""
+                        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                        echo "PR Review Checklist Reference (reports/pr-review/checklist-reference.md)"
+                        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                        echo ""
+                        sed -n '1,220p' reports/pr-review/checklist-reference.md || true
+                    '''
+                }
+            }
+        }
+
+        stage('Skill Gate') {
+            when {
+                expression { return env.BUILD_ALLOWED == 'true' }
+            }
+            steps {
+                sh '''
+                    mkdir -p reports/skill-gate
+                    node scripts/quality/run-skill-gate.cjs \
+                      --mode ci \
+                      --out-json reports/skill-gate/skill-gate.json \
+                      --out-md reports/skill-gate/skill-gate.md
+
+                    echo ""
+                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                    echo "Skill Gate Report (reports/skill-gate/skill-gate.md)"
+                    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+                    echo ""
+                    sed -n '1,220p' reports/skill-gate/skill-gate.md || true
+                '''
             }
         }
 
@@ -1029,6 +1137,14 @@ exit 0
                             def trivyDbMetadata = "${trivyCacheDir}/db/metadata.json"
                             def trivyDbTimestamp = "${trivyCacheDir}/.db-updated-at"
                             def trivyDbTtlSeconds = 12 * 60 * 60
+                            def trivyDbRefreshTimeoutSeconds = 180
+                            def cachedDbAvailable = sh(
+                                script: """
+                                    set -eu
+                                    [ -s '${trivyDbMetadata}' ]
+                                """,
+                                returnStatus: true
+                            ) == 0
                             def shouldRefreshDb = sh(
                                 script: """
                                     set -eu
@@ -1046,10 +1162,11 @@ exit 0
                             if (shouldRefreshDb) {
                                 def dbReady = false
                                 for (def repo : dbRepos) {
-                                    echo "Refreshing Trivy DB from ${repo}..."
+                                    echo "Refreshing Trivy DB from ${repo} (timeout ${trivyDbRefreshTimeoutSeconds}s)..."
                                     def dbStatus = sh(
                                         script: """
-                                            docker run --rm \
+                                            timeout '${trivyDbRefreshTimeoutSeconds}' \
+                                              docker run --rm \
                                               -v '${trivyCacheDir}:/tmp/trivy-cache' \
                                               '${env.TRIVY_IMAGE}' image \
                                               --cache-dir /tmp/trivy-cache \
@@ -1063,9 +1180,16 @@ exit 0
                                         dbReady = true
                                         break
                                     }
+                                    echo "Trivy DB refresh from ${repo} failed with exit code ${dbStatus}."
                                 }
                                 if (!dbReady) {
-                                    error('Unable to download Trivy vulnerability DB from configured repositories.')
+                                    if (cachedDbAvailable) {
+                                        echo 'Unable to refresh Trivy vulnerability DB from configured repositories; continuing with the previously cached DB.'
+                                    } else {
+                                        echo 'Unable to prepare a Trivy vulnerability DB; skipping image scan instead of blocking the whole pipeline.'
+                                        writeFile file: 'reports/trivy/image-scan-skipped.md', text: 'Trivy image scan skipped because no vulnerability DB could be downloaded and no cached DB was available.\n'
+                                        return
+                                    }
                                 }
                             } else {
                                 echo 'Using cached Trivy DB (fresh enough for this build).'
