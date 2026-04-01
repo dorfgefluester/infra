@@ -7,7 +7,7 @@ This is the target staging workflow for `dorfgefluester` on `dev-env-01`.
 - Helm chart path: `helm/dorfgefluester`
 - Staging values file: `helm/dorfgefluester/values-staging.yaml`
 - Staging namespace: `dorfgefluester`
-- Staging ingress URL: `http://dev-env-01/dorfgefluester/`
+- Staging ingress URL: `https://dev-env-01/dorfgefluester/`
 - Runtime database secret expected by the chart: `dorfgefluester-postgres`
 - Argo CD runs on `argocd-01` and deploys to the remote k3s cluster on `dev-env-01`
 
@@ -164,9 +164,15 @@ Verify the rollout:
 ```bash
 sudo k3s kubectl -n dorfgefluester get all
 sudo k3s kubectl -n dorfgefluester get ingress
+<<<<<<< Updated upstream
 curl -I http://dev-env-01/dorfgefluester/
 curl -fsS http://dev-env-01/dorfgefluester/healthz
 curl -fsS http://dev-env-01/dorfgefluester/api/health
+=======
+curl -I https://dev-env-01/dorfgefluester/
+curl -fsS https://dev-env-01/dorfgefluester/healthz
+curl -fsS https://dev-env-01/api/health
+>>>>>>> Stashed changes
 ```
 
 If a rollout is unhealthy:

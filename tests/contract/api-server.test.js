@@ -36,6 +36,10 @@ describe('API server', () => {
     return {
       status: response.status,
       data,
+      headers: {
+        accessControlAllowOrigin: response.headers.get('access-control-allow-origin'),
+        accessControlAllowHeaders: response.headers.get('access-control-allow-headers'),
+      },
     };
   }
 
@@ -46,6 +50,7 @@ describe('API server', () => {
         apiPort: 0,
         databaseUrl: '',
         appOrigin: 'http://127.0.0.1:3000',
+        allowLocalDebugAuth: true,
         sessionCookieName: 'test_session',
         sessionTtlHours: 24,
         secureCookies: false,
@@ -53,6 +58,7 @@ describe('API server', () => {
         apiLogLevel: 'error',
         authRateLimitWindowMs: 60 * 1000,
         authRateLimitMax: 3,
+        maxJsonBodyBytes: 2048,
         nodeEnv: 'test',
       },
       storage,
@@ -236,5 +242,71 @@ describe('API server', () => {
         expect(loginAttempt.data.error).toBe('too_many_requests');
       }
     }
+  });
+
+  test('rejects oversized request bodies before parsing', async () => {
+    const oversized = await request('/api/auth/login', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        email: 'big@test.dev',
+        password: 'x'.repeat(4096),
+      }),
+    });
+
+    expect(oversized.status).toBe(413);
+    expect(oversized.data).toEqual(
+      expect.objectContaining({
+        error: 'payload_too_large',
+        limitBytes: 2048,
+      }),
+    );
+  });
+
+  test('limits localhost debug auth and CORS shortcuts to explicit local-debug mode', async () => {
+    api.config.nodeEnv = 'production';
+    api.config.appOrigin = 'https://dorfgefluester.prod.example.com';
+    api.config.allowLocalDebugAuth = false;
+    api.config.exposeResetTokens = true;
+
+    const registered = await request('/api/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: 'prod-lockdown@test.dev',
+        password: 'valid-password-123',
+        playerName: 'ProdLockdown',
+      }),
+    });
+
+    expect(registered.status).toBe(201);
+    expect(registered.data.debugSessionId).toBeUndefined();
+
+    await request('/api/auth/logout', { method: 'POST', body: '{}' });
+    const forgot = await request('/api/auth/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ email: 'prod-lockdown@test.dev' }),
+    });
+
+    expect(forgot.status).toBe(200);
+    expect(forgot.data.debugToken).toBeUndefined();
+
+    const localhostCors = await request('/api/health', {
+      method: 'GET',
+      headers: {
+        origin: 'http://127.0.0.1:5173',
+      },
+    });
+    expect(localhostCors.headers.accessControlAllowOrigin).toBeNull();
+
+    const appCors = await request('/api/health', {
+      method: 'GET',
+      headers: {
+        origin: 'https://dorfgefluester.prod.example.com',
+      },
+    });
+    expect(appCors.headers.accessControlAllowOrigin).toBe('https://dorfgefluester.prod.example.com');
+    expect(appCors.headers.accessControlAllowHeaders).toBe('content-type');
   });
 });
