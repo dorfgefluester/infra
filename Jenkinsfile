@@ -203,7 +203,8 @@ pipeline {
                               -e POSTGRES_DB=dorfgefluester \
                               -e POSTGRES_USER=dorfgefluester \
                               -e POSTGRES_PASSWORD=dorfgefluester-ci \
-                              postgres:16-alpine >/dev/null
+                              postgres:16-alpine \
+                              postgres -c listen_addresses='*' >/dev/null
                             ready=0
                             for _ in $(seq 1 90); do
                               if ! docker ps --format '{{.Names}}' | grep -Fx "$migration_db_container" >/dev/null 2>&1; then
@@ -212,8 +213,11 @@ pipeline {
                                 docker logs "$migration_db_container" || true
                                 exit 1
                               fi
-                              if docker run --rm --network "$migration_db_network" postgres:16-alpine \
-                                pg_isready -h "$migration_db_container" -U dorfgefluester -d dorfgefluester \
+                              if docker run --rm --network "$migration_db_network" \
+                                -e PGPASSWORD=dorfgefluester-ci \
+                                postgres:16-alpine \
+                                psql -h "$migration_db_container" -U dorfgefluester -d dorfgefluester \
+                                  -v ON_ERROR_STOP=1 -tAc 'SELECT 1' \
                                 >/dev/null 2>&1; then
                                 ready=1
                                 break
