@@ -16,8 +16,8 @@ describe('gitops deploy contract', () => {
     expect(readRepoFile('helm/dorfgefluester/values-staging.yaml')).toContain('namespace: dorfgefluester');
     expect(readRepoFile('helm/dorfgefluester/values-staging.yaml')).toContain('deploymentMode: monolith');
     expect(readRepoFile('helm/dorfgefluester/values-staging.yaml')).toContain('enabled: true');
-    expect(readRepoFile('helm/dorfgefluester/values-staging.yaml')).toContain('tag: master-latest');
-    expect(readRepoFile('helm/dorfgefluester/values-staging.yaml')).toContain('pullPolicy: Always');
+    expect(readRepoFile('helm/dorfgefluester/values-staging.yaml')).toMatch(/tag: [0-9a-f]{7}/);
+    expect(readRepoFile('helm/dorfgefluester/values-staging.yaml')).toContain('pullPolicy: IfNotPresent');
     expect(readRepoFile('helm/dorfgefluester/values-production.yaml')).toContain('namespace: production');
   });
 
