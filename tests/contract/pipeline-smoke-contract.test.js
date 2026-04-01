@@ -68,6 +68,7 @@ describe('pipeline smoke contracts', () => {
     expect(packageJson.scripts.test).toBe('jest');
     expect(packageJson.scripts['test:e2e']).toBe('playwright test');
     expect(packageJson.scripts.lint).toBe('node scripts/quality/lint.cjs');
+    expect(packageJson.scripts['quality-check']).toBe('npm run quality:skills:local');
   });
 
   test('jenkins bundle budget check runs in the same containerized build context', () => {
