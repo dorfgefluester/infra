@@ -84,12 +84,11 @@ describe('pipeline smoke contracts', () => {
 
     expect(jenkinsfile).toContain("stage('Database Migration Smoke Test')");
     expect(jenkinsfile).toContain('for _ in $(seq 1 90); do');
-    expect(jenkinsfile).toContain('docker network create "$migration_db_network"');
-    expect(jenkinsfile).toContain('--network "$migration_db_network"');
-    expect(jenkinsfile).toContain("postgres -c listen_addresses='*'");
-    expect(jenkinsfile).toContain('psql -h "$migration_db_container" -U dorfgefluester -d dorfgefluester');
-    expect(jenkinsfile).toContain("SELECT 1");
-    expect(jenkinsfile).toContain('@${migration_db_container}:5432/dorfgefluester');
+    expect(jenkinsfile).toContain('docker network rm "$migration_db_network"');
+    expect(jenkinsfile).toContain('docker exec "$migration_db_container"');
+    expect(jenkinsfile).toContain('pg_isready -h 127.0.0.1 -U dorfgefluester -d dorfgefluester');
+    expect(jenkinsfile).toContain('--network "container:$migration_db_container"');
+    expect(jenkinsfile).toContain('@127.0.0.1:5432/dorfgefluester');
     expect(jenkinsfile).toContain("sh -lc 'node scripts/quality/api-migration-smoke.cjs'");
   });
 

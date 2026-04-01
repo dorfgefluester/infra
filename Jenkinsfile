@@ -196,15 +196,12 @@ pipeline {
                             trap cleanup EXIT
                             docker rm -f "$migration_db_container" >/dev/null 2>&1 || true
                             docker network rm "$migration_db_network" >/dev/null 2>&1 || true
-                            docker network create "$migration_db_network" >/dev/null
                             docker run -d --rm \
                               --name "$migration_db_container" \
-                              --network "$migration_db_network" \
                               -e POSTGRES_DB=dorfgefluester \
                               -e POSTGRES_USER=dorfgefluester \
                               -e POSTGRES_PASSWORD=dorfgefluester-ci \
-                              postgres:16-alpine \
-                              postgres -c listen_addresses='*' >/dev/null
+                              postgres:16-alpine >/dev/null
                             ready=0
                             for _ in $(seq 1 90); do
                               if ! docker ps --format '{{.Names}}' | grep -Fx "$migration_db_container" >/dev/null 2>&1; then
@@ -213,11 +210,8 @@ pipeline {
                                 docker logs "$migration_db_container" || true
                                 exit 1
                               fi
-                              if docker run --rm --network "$migration_db_network" \
-                                -e PGPASSWORD=dorfgefluester-ci \
-                                postgres:16-alpine \
-                                psql -h "$migration_db_container" -U dorfgefluester -d dorfgefluester \
-                                  -v ON_ERROR_STOP=1 -tAc 'SELECT 1' \
+                              if docker exec "$migration_db_container" \
+                                pg_isready -h 127.0.0.1 -U dorfgefluester -d dorfgefluester \
                                 >/dev/null 2>&1; then
                                 ready=1
                                 break
@@ -229,10 +223,10 @@ pipeline {
                               echo "ERROR: postgres migration smoke container did not become ready."
                               exit 1
                             fi
-                            docker run --rm --network "$migration_db_network" -u "$(id -u):$(id -g)" \
+                            docker run --rm --network "container:$migration_db_container" -u "$(id -u):$(id -g)" \
                               -v "$WORKSPACE:/work" -w /work \
                               -e HOME=/tmp \
-                              -e DATABASE_URL="postgres://dorfgefluester:dorfgefluester-ci@${migration_db_container}:5432/dorfgefluester" \
+                              -e DATABASE_URL="postgres://dorfgefluester:dorfgefluester-ci@127.0.0.1:5432/dorfgefluester" \
                               node:20 \
                               sh -lc 'node scripts/quality/api-migration-smoke.cjs'
                         '''
