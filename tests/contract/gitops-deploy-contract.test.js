@@ -13,10 +13,20 @@ describe('gitops deploy contract', () => {
   test('helm chart exposes shared defaults plus staging and production overlays', () => {
     expect(readRepoFile('helm/dorfgefluester/Chart.yaml')).toContain('name: dorfgefluester');
     expect(readRepoFile('helm/dorfgefluester/values.yaml')).toContain('fullnameOverride: dorfgefluester');
-    expect(readRepoFile('helm/dorfgefluester/values-staging.yaml')).toContain('namespace: staging');
+    expect(readRepoFile('helm/dorfgefluester/values-staging.yaml')).toContain('namespace: dorfgefluester');
     expect(readRepoFile('helm/dorfgefluester/values-staging.yaml')).toContain('deploymentMode: monolith');
-    expect(readRepoFile('helm/dorfgefluester/values-staging.yaml')).toContain('enabled: false');
+    expect(readRepoFile('helm/dorfgefluester/values-staging.yaml')).toContain('enabled: true');
+    expect(readRepoFile('helm/dorfgefluester/values-staging.yaml')).toMatch(/tag: [0-9a-f]{7}/);
+    expect(readRepoFile('helm/dorfgefluester/values-staging.yaml')).toContain('pullPolicy: IfNotPresent');
     expect(readRepoFile('helm/dorfgefluester/values-production.yaml')).toContain('namespace: production');
+  });
+
+  test('argocd staging application tracks master for manual post-jenkins deployments', () => {
+    const appManifest = readRepoFile('argocd/dorfgefluester-staging.application.yaml');
+
+    expect(appManifest).toContain('name: dorfgefluester-staging');
+    expect(appManifest).toContain('targetRevision: master');
+    expect(appManifest).toContain('namespace: dorfgefluester');
   });
 
   test('helm templates support staging monolith mode and keep secrets outside git-managed manifests', () => {
