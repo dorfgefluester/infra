@@ -1442,42 +1442,28 @@ exit 0
                         }
                         echo "Images published: ${env.IMAGE_REPO}:${publishedTag ?: 'unknown'} and ${env.API_IMAGE_REPO}:${publishedTag ?: 'unknown'}"
                     }
-                    echo "Use dedicated deploy pipelines for environment rollout (e.g. jenkins/*-deploy.Jenkinsfile)."
+                    echo "Deployment is GitOps-managed. Update helm/dorfgefluester/values-staging.yaml on master and sync Argo CD manually after reviewing the diff."
                 }
             }
         }
     }
 
-	    post {
-	        success {
-	            script {
-	                if (env.BRANCH_NAME == 'master') {
-	                    catchError(buildResult: 'SUCCESS', stageResult: 'UNSTABLE') {
-	                        build job: 'dorfgefluester-INT',
-	                            wait: false,
-	                            parameters: [
-	                                string(name: 'IMAGE_TAG', value: env.IMAGE_TAG),
-	                                string(name: 'BRANCH', value: env.BRANCH_NAME)
-	                            ]
-	                    }
-	                }
-	            }
-	        }
-	        always {
-	            // Persist scan outputs for backlog triage (SonarQube issues export, Trivy JSON reports, etc.).
-	            archiveArtifacts artifacts: 'reports/**/*,report-task.txt', fingerprint: false, allowEmptyArchive: true
-	            // Keep the current job cache outside the workspace root, but prune stale sibling caches
-	            // so multibranch jobs do not keep accumulating npm/trivy/buildx data forever.
-	            sh '''
-	                set +e
-	                mkdir -p "$CACHE_ROOT"
-	                touch "$JOB_CACHE_TOUCH_FILE"
-	                find "$CACHE_ROOT" -mindepth 1 -maxdepth 1 -type d ! -path "$JOB_CACHE_DIR" -mtime +7 -print | while read -r stale_dir; do
-	                  [ -n "$stale_dir" ] || continue
-	                  rm -rf "$stale_dir" || true
-	                done
-	            '''
-	            cleanWs(deleteDirs: true, disableDeferredWipeout: true, notFailBuild: true)
+    post {
+        always {
+            // Persist scan outputs for backlog triage (SonarQube issues export, Trivy JSON reports, etc.).
+            archiveArtifacts artifacts: 'reports/**/*,report-task.txt', fingerprint: false, allowEmptyArchive: true
+            // Keep the current job cache outside the workspace root, but prune stale sibling caches
+            // so multibranch jobs do not keep accumulating npm/trivy/buildx data forever.
+            sh '''
+                set +e
+                mkdir -p "$CACHE_ROOT"
+                touch "$JOB_CACHE_TOUCH_FILE"
+                find "$CACHE_ROOT" -mindepth 1 -maxdepth 1 -type d ! -path "$JOB_CACHE_DIR" -mtime +7 -print | while read -r stale_dir; do
+                  [ -n "$stale_dir" ] || continue
+                  rm -rf "$stale_dir" || true
+                done
+            '''
+            cleanWs(deleteDirs: true, disableDeferredWipeout: true, notFailBuild: true)
         }
     }
 }
