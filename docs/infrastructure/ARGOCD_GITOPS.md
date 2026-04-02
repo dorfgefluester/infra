@@ -7,7 +7,7 @@ This is the target staging workflow for `dorfgefluester` on `dev-env-01`.
 - Helm chart path: `helm/dorfgefluester`
 - Staging values file: `helm/dorfgefluester/values-staging.yaml`
 - Staging namespace: `dorfgefluester`
-- Staging ingress URL: `https://dev-env-01/dorfgefluester/`
+- Staging ingress URL: `http://dev-env-01/dorfgefluester/`
 - Runtime database secret expected by the chart: `dorfgefluester-postgres`
 - Argo CD runs on `argocd-01` and deploys to the remote k3s cluster on `dev-env-01`
 
@@ -27,7 +27,7 @@ The staging Argo application must track `master`, not a release branch, if `mast
 
 ## Required Repo Manifests
 
-- Argo CD application: `argocd/applications/dorfgefluester-staging.yaml`
+- Argo CD application: `argocd/dorfgefluester-staging.application.yaml`
 - Sealed Secret example: `argocd/sealed-secrets/dorfgefluester-postgres.sealedsecret.yaml.example`
 
 ## Step-By-Step Commands By Host
@@ -64,7 +64,7 @@ Verify the remote cluster is registered in Argo CD and apply the staging applica
 
 ```bash
 argocd cluster list
-sudo k3s kubectl apply -f argocd/applications/dorfgefluester-staging.yaml
+sudo k3s kubectl apply -f argocd/dorfgefluester-staging.application.yaml
 argocd app get dorfgefluester-staging
 argocd app diff dorfgefluester-staging
 ```
@@ -126,7 +126,7 @@ rm -f /tmp/dorfgefluester-postgres.secret.yaml
 Commit the Argo CD app and Sealed Secret:
 
 ```bash
-git add argocd/applications/dorfgefluester-staging.yaml argocd/sealed-secrets/dorfgefluester-postgres.sealedsecret.yaml
+git add argocd/dorfgefluester-staging.application.yaml argocd/sealed-secrets/dorfgefluester-postgres.sealedsecret.yaml
 git commit -m "Add Argo CD staging app and sealed secret"
 git push
 ```
@@ -164,15 +164,9 @@ Verify the rollout:
 ```bash
 sudo k3s kubectl -n dorfgefluester get all
 sudo k3s kubectl -n dorfgefluester get ingress
-<<<<<<< Updated upstream
 curl -I http://dev-env-01/dorfgefluester/
 curl -fsS http://dev-env-01/dorfgefluester/healthz
-curl -fsS http://dev-env-01/dorfgefluester/api/health
-=======
-curl -I https://dev-env-01/dorfgefluester/
-curl -fsS https://dev-env-01/dorfgefluester/healthz
-curl -fsS https://dev-env-01/api/health
->>>>>>> Stashed changes
+curl -fsS http://dev-env-01/api/health
 ```
 
 If a rollout is unhealthy:

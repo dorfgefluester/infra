@@ -22,7 +22,7 @@ describe('gitops deploy contract', () => {
   });
 
   test('argocd staging application tracks master for manual post-jenkins deployments', () => {
-    const appManifest = readRepoFile('argocd/applications/dorfgefluester-staging.yaml');
+    const appManifest = readRepoFile('argocd/dorfgefluester-staging.application.yaml');
 
     expect(appManifest).toContain('name: dorfgefluester-staging');
     expect(appManifest).toContain('targetRevision: master');
