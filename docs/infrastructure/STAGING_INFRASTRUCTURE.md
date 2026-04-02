@@ -8,7 +8,7 @@
 - Jenkins connects to the staging host via SSH as user `deploy`.
 - Kubernetes on the staging host is `k3s`.
 - The app image is pulled from the local registry `dev-env-01:5000`.
-- Staging ingress is working at `http://dev-env-01/dorfgefluester/`.
+- Staging ingress is working at `https://dev-env-01/dorfgefluester/`.
 
 ## Deployment Flow
 
@@ -19,7 +19,7 @@
 
 ## Known Good State
 
-- The app is reachable through Traefik ingress at `http://dev-env-01/dorfgefluester/`.
+- The app is reachable through Traefik ingress at `https://dev-env-01/dorfgefluester/`.
 - k3s cluster access from Jenkins is working.
 - The local container registry is working for staging pulls.
 - Helm-based deployment to the `staging` namespace is working.

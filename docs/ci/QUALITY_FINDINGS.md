@@ -135,8 +135,8 @@ node scripts/quality/pull-findings.cjs --strict true
 ## Deployed staging scans (Jenkins artifacts)
 
 When you deploy to staging via `jenkins/dorfgefluester-staging-deploy.Jenkinsfile`, the pipeline can run:
-- **OWASP ZAP baseline (DAST)** against `http://dev-env-01/dorfgefluester/` and archive `reports/zap/*`.
-- **k6 smoke load test** against `http://dev-env-01/dorfgefluester/` and archive `reports/k6/summary.json`.
+- **OWASP ZAP baseline (DAST)** against `https://dev-env-01/dorfgefluester/` and archive `reports/zap/*`.
+- **k6 smoke load test** against `https://dev-env-01/dorfgefluester/` and archive `reports/k6/summary.json`.
 
 In the main CI pipeline (`Jenkinsfile`), the repo also runs:
 - **Gitleaks** secrets scan and archives `reports/gitleaks/gitleaks.json`.
