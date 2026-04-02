@@ -100,6 +100,17 @@ describe('pipeline smoke contracts', () => {
     expect(jenkinsfile).toContain('cleanWs(deleteDirs: true, disableDeferredWipeout: true, notFailBuild: true)');
   });
 
+  test('jenkins gitleaks scan excludes generated analysis artifacts from the workspace tarball', () => {
+    const jenkinsfile = readRepoFile('Jenkinsfile');
+
+    expect(jenkinsfile).toContain("stage('Gitleaks')");
+    expect(jenkinsfile).toContain("--exclude='./reports'");
+    expect(jenkinsfile).toContain("--exclude='./sonar-report.json'");
+    expect(jenkinsfile).toContain("--exclude='./report-task.txt'");
+    expect(jenkinsfile).toContain("--exclude='./build-meta.json'");
+    expect(jenkinsfile).toContain("--exclude='./build-meta.md'");
+  });
+
   test('nginx runtime exposes health endpoints for root and prefixed deployments', () => {
     const nginxConfig = readRepoFile('nginx/default.conf');
 

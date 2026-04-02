@@ -729,6 +729,10 @@ exit 0
                                       --exclude='./.git' \
                                       --exclude='./.scannerwork' \
                                       --exclude='./playwright-report' \
+                                      --exclude='./sonar-report.json' \
+                                      --exclude='./report-task.txt' \
+                                      --exclude='./build-meta.json' \
+                                      --exclude='./build-meta.md' \
                                       --exclude='./tests/jenkins' \
                                       --exclude='./tests/test-results' \
                                       --exclude='./reports' \
