@@ -15,25 +15,58 @@ services:
     volumes:
       - dorfgefluester-postgres-data:/var/lib/postgresql/data
 
+  dorfgefluester-redis:
+    image: docker.io/library/redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "6379:6379"
+
   dorfgefluester-api:
     build:
       context: .
       dockerfile: Dockerfile.api
     environment:
       API_LOG_LEVEL: debug
+      API_HOST: 0.0.0.0
       API_PORT: 3001
       APP_ORIGIN: http://127.0.0.1:3000
       AUTH_RATE_LIMIT_MAX: "5"
       AUTH_RATE_LIMIT_WINDOW_MS: "60000"
       DATABASE_URL: postgres://dorfgefluester:dorfgefluester-dev-only@dorfgefluester-postgres:5432/dorfgefluester
       EXPOSE_RESET_TOKENS: "true"
+      SAVE_SLOT_CACHE_TTL_SECONDS: "30"
+      REDIS_URL: redis://dorfgefluester-redis:6379/0
       NODE_ENV: development
       SECURE_COOKIES: "false"
     depends_on:
       dorfgefluester-postgres:
         condition: service_healthy
+      dorfgefluester-redis:
+        condition: service_healthy
     ports:
       - "3001:3001"
+
+  dorfgefluester-worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    command: ["node", "api/src/worker-cli.js"]
+    environment:
+      API_LOG_LEVEL: debug
+      DATABASE_URL: postgres://dorfgefluester:dorfgefluester-dev-only@dorfgefluester-postgres:5432/dorfgefluester
+      REDIS_URL: redis://dorfgefluester-redis:6379/0
+      NODE_ENV: development
+      WORKER_MAINTENANCE_INTERVAL_MS: "60000"
+    depends_on:
+      dorfgefluester-postgres:
+        condition: service_healthy
+      dorfgefluester-redis:
+        condition: service_healthy
 
   dorfgefluester-web:
     build:

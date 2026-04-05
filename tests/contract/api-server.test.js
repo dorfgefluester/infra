@@ -1,6 +1,6 @@
 /** @jest-environment node */
 
-import { afterEach, beforeEach, describe, expect, test } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, jest, test } from '@jest/globals';
 import { createApiServer } from '../../api/src/server.js';
 import { createMemoryStorage } from '../../api/src/storage/memoryStorage.js';
 
@@ -9,6 +9,7 @@ describe('API server', () => {
   let storage;
   let baseUrl;
   let cookie = '';
+  let sharedCache;
 
   async function request(path, options = {}) {
     const response = await fetch(`${baseUrl}${path}`, {
@@ -40,6 +41,29 @@ describe('API server', () => {
   }
 
   beforeEach(async () => {
+    const cacheValues = new Map();
+    sharedCache = {
+      async remember(namespace, rawKey, ttlSeconds, loader) {
+        const key = `${namespace}:${rawKey}`;
+        if (cacheValues.has(key)) {
+          return { value: cacheValues.get(key), hit: true };
+        }
+
+        const value = await loader();
+        if (value !== null && value !== undefined) {
+          cacheValues.set(key, value);
+        }
+        return { value, hit: false };
+      },
+      async delete(namespace, rawKey) {
+        cacheValues.delete(`${namespace}:${rawKey}`);
+      },
+      async deleteMany(entries = []) {
+        for (const [namespace, rawKey] of entries) {
+          cacheValues.delete(`${namespace}:${rawKey}`);
+        }
+      },
+    };
     storage = createMemoryStorage();
     api = await createApiServer({
       config: {
@@ -53,9 +77,15 @@ describe('API server', () => {
         apiLogLevel: 'error',
         authRateLimitWindowMs: 60 * 1000,
         authRateLimitMax: 3,
+        mapSearchCacheTtlSeconds: 60,
+        routeCacheTtlSeconds: 60,
+        nearestRoadCacheTtlSeconds: 60,
+        saveSlotCacheTtlSeconds: 30,
+        workerMaintenanceIntervalMs: 60 * 1000,
         nodeEnv: 'test',
       },
       storage,
+      sharedCache,
     });
     await api.listen();
     baseUrl = `http://127.0.0.1:${api.server.address().port}`;
@@ -96,6 +126,17 @@ describe('API server', () => {
           name: 'Cloud Slot 1',
           preview: { location: 'Village', quests: 2 },
           player: { x: 10, y: 20 },
+          time: { hour: 8, minute: 15, day: 2 },
+          world: { currentMapId: 'city-square', virtualPosition: { x: 10, y: 20 } },
+          systems: {
+            inventory: { items: { apple: 2, bread: 1 } },
+            quests: {
+              activeQuests: [['fetch_flour', { progress: 50 }]],
+              completedQuests: ['welcome'],
+            },
+            audio: { isMuted: true },
+            accessibility: { highContrastEnabled: true },
+          },
         },
       }),
     });
@@ -110,10 +151,26 @@ describe('API server', () => {
         expect.objectContaining({
           slot: 1,
           exists: true,
-          payload: expect.objectContaining({ player: { x: 10, y: 20 } }),
+          preview: expect.objectContaining({
+            currentMapId: 'city-square',
+            quests: 1,
+            completedQuests: 1,
+            inventoryItems: 3,
+          }),
+          payload: expect.objectContaining({
+            player: { x: 10, y: 20 },
+            world: expect.objectContaining({ currentMapId: 'city-square' }),
+            systems: expect.objectContaining({
+              inventory: { items: { apple: 2, bread: 1 } },
+            }),
+          }),
         }),
       ]),
     );
+    expect(listSaves.data.slots.find((slot) => slot.slot === 1)?.payload.systems.audio).toBeUndefined();
+    expect(
+      listSaves.data.slots.find((slot) => slot.slot === 1)?.payload.systems.accessibility,
+    ).toBeUndefined();
 
     const logout = await request('/api/auth/logout', { method: 'POST', body: '{}' });
     expect(logout.status).toBe(200);
@@ -187,6 +244,64 @@ describe('API server', () => {
     expect(login.data.authenticated).toBe(true);
   });
 
+  test('caches save reads and invalidates them on writes', async () => {
+    const originalListSaveSlots = storage.listSaveSlots.bind(storage);
+    const originalGetSaveSlot = storage.getSaveSlot.bind(storage);
+    const listSpy = jest.fn(originalListSaveSlots);
+    const getSpy = jest.fn(originalGetSaveSlot);
+    storage.listSaveSlots = listSpy;
+    storage.getSaveSlot = getSpy;
+
+    const registered = await request('/api/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: 'cache@test.dev',
+        password: 'topsecret123',
+        playerName: 'CacheTester',
+      }),
+    });
+    expect(registered.status).toBe(201);
+
+    await request('/api/saves/1', {
+      method: 'PUT',
+      body: JSON.stringify({
+        payload: {
+          name: 'Cached Slot',
+          player: { x: 1, y: 2 },
+        },
+      }),
+    });
+    listSpy.mockClear();
+    getSpy.mockClear();
+
+    await request('/api/saves', { method: 'GET' });
+    await request('/api/saves', { method: 'GET' });
+    expect(listSpy).toHaveBeenCalledTimes(1);
+
+    await request('/api/saves/1', { method: 'GET' });
+    const slotReadsAfterFirstGet = getSpy.mock.calls.length;
+    await request('/api/saves/1', { method: 'GET' });
+    expect(getSpy).toHaveBeenCalledTimes(slotReadsAfterFirstGet);
+
+    await request('/api/saves/1', {
+      method: 'PUT',
+      body: JSON.stringify({
+        payload: {
+          name: 'Updated Slot',
+          player: { x: 3, y: 4 },
+        },
+      }),
+    });
+
+    const slotReadsBeforeInvalidatedGet = getSpy.mock.calls.length;
+    const updatedSlot = await request('/api/saves/1', { method: 'GET' });
+    expect(updatedSlot.data.slot.payload.player).toEqual({ x: 3, y: 4 });
+    expect(getSpy.mock.calls.length).toBeGreaterThan(slotReadsBeforeInvalidatedGet);
+
+    await request('/api/saves', { method: 'GET' });
+    expect(listSpy).toHaveBeenCalledTimes(2);
+  });
+
   test('validates public payloads and rate limits auth endpoints', async () => {
     const invalidRegister = await request('/api/auth/register', {
       method: 'POST',
@@ -235,6 +350,87 @@ describe('API server', () => {
         expect(loginAttempt.status).toBe(429);
         expect(loginAttempt.data.error).toBe('too_many_requests');
       }
+    }
+  });
+
+  test('proxies map search, route, and nearest-road requests', async () => {
+    const originalFetch = global.fetch;
+    global.fetch = async (url, options) => {
+      if (String(url).startsWith(baseUrl)) {
+        return originalFetch(url, options);
+      }
+
+      if (String(url).includes('nominatim.openstreetmap.org')) {
+        return {
+          ok: true,
+          json: async () => [
+            {
+              place_id: 5,
+              display_name: 'Berlin, Deutschland',
+              lat: '52.52',
+              lon: '13.405',
+            },
+          ],
+        };
+      }
+
+      if (String(url).includes('/route/v1/')) {
+        return {
+          ok: true,
+          json: async () => ({
+            code: 'Ok',
+            routes: [
+              {
+                distance: 1200,
+                duration: 900,
+                geometry: {
+                  coordinates: [
+                    [13.405, 52.52],
+                    [13.41, 52.521],
+                  ],
+                },
+                legs: [{ steps: [{ name: 'Walk ahead' }] }],
+              },
+            ],
+          }),
+        };
+      }
+
+      if (String(url).includes('/nearest/v1/')) {
+        return {
+          ok: true,
+          json: async () => ({
+            code: 'Ok',
+            waypoints: [{ location: [13.4055, 52.5205], name: 'Test Street' }],
+          }),
+        };
+      }
+
+      throw new Error(`Unexpected URL: ${url}`);
+    };
+
+    try {
+      const search = await request('/api/map/search?q=berlin&limit=5', { method: 'GET' });
+      expect(search.status).toBe(200);
+      expect(search.data.results[0].display_name).toContain('Berlin');
+
+      const route = await request(
+        '/api/map/route?startLat=52.52&startLon=13.405&endLat=52.521&endLon=13.41',
+        { method: 'GET' },
+      );
+      expect(route.status).toBe(200);
+      expect(route.data.route.distance).toBe(1200);
+      expect(route.data.route.waypoints).toHaveLength(2);
+
+      const nearest = await request('/api/map/nearest?lat=52.52&lon=13.405', { method: 'GET' });
+      expect(nearest.status).toBe(200);
+      expect(nearest.data.road).toEqual({
+        lat: 52.5205,
+        lon: 13.4055,
+        name: 'Test Street',
+      });
+    } finally {
+      global.fetch = originalFetch;
     }
   });
 });
