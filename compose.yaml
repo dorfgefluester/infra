@@ -1,6 +1,6 @@
 services:
   dorfgefluester-postgres:
-    image: docker.io/library/postgres:16-alpine
+    image: docker.io/pgvector/pgvector:pg16
     environment:
       POSTGRES_DB: dorfgefluester
       POSTGRES_USER: dorfgefluester
@@ -39,6 +39,8 @@ services:
       AUTH_RATE_LIMIT_WINDOW_MS: "60000"
       DATABASE_URL: postgres://dorfgefluester:dorfgefluester-dev-only@dorfgefluester-postgres:5432/dorfgefluester
       EXPOSE_RESET_TOKENS: "true"
+      POSTHOG_API_KEY: ""
+      POSTHOG_HOST: ""
       SAVE_SLOT_CACHE_TTL_SECONDS: "30"
       REDIS_URL: redis://dorfgefluester-redis:6379/0
       NODE_ENV: development

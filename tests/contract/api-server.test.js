@@ -353,6 +353,97 @@ describe('API server', () => {
     }
   });
 
+  test('answers contextual help queries and accepts feedback without auth', async () => {
+    const query = await request('/api/help/query', {
+      method: 'POST',
+      body: JSON.stringify({
+        question: 'How do I continue a quest?',
+        locale: 'en',
+        anonymousId: 'guest-help-test',
+        context: {
+          currentScene: 'InfiniteMapScene',
+          surface: 'help-modal',
+          activeQuestIds: ['fetch_flour'],
+          sessionMode: 'guest',
+        },
+      }),
+    });
+
+    expect(query.status).toBe(200);
+    expect(query.data.answer).toContain('quest');
+    expect(query.data.feedbackToken).toBeTruthy();
+    expect(query.data.sources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: expect.any(String),
+          label: expect.any(String),
+        }),
+      ]),
+    );
+
+    const feedback = await request('/api/help/feedback', {
+      method: 'POST',
+      body: JSON.stringify({
+        feedbackToken: query.data.feedbackToken,
+        helpful: false,
+        reason: 'missing-or-unclear',
+        locale: 'en',
+        anonymousId: 'guest-help-test',
+        context: {
+          currentScene: 'InfiniteMapScene',
+          surface: 'help-modal',
+          activeQuestIds: ['fetch_flour'],
+        },
+      }),
+    });
+
+    expect(feedback.status).toBe(200);
+    expect(feedback.data.ok).toBe(true);
+  });
+
+  test('records explicit help telemetry and validates malformed help payloads', async () => {
+    const telemetry = await request('/api/help/telemetry', {
+      method: 'POST',
+      body: JSON.stringify({
+        eventName: 'failed-search',
+        locale: 'de',
+        anonymousId: 'guest-help-telemetry',
+        context: {
+          currentScene: 'InfiniteMapScene',
+          surface: 'start-location-modal',
+          failedSearchType: 'location-search',
+          sessionMode: 'guest',
+        },
+        metadata: {
+          queryLength: 7,
+          resultCount: 0,
+        },
+      }),
+    });
+
+    expect(telemetry.status).toBe(200);
+    expect(telemetry.data.ok).toBe(true);
+
+    const invalidQuery = await request('/api/help/query', {
+      method: 'POST',
+      body: JSON.stringify({
+        question: 'hi',
+      }),
+    });
+    expect(invalidQuery.status).toBe(400);
+    expect(invalidQuery.data.error).toBe('invalid_help_query');
+
+    const invalidFeedback = await request('/api/help/feedback', {
+      method: 'POST',
+      body: JSON.stringify({
+        feedbackToken: 'missing-token',
+        locale: 'en',
+      }),
+    });
+    expect(invalidFeedback.status).toBe(400);
+    expect(invalidFeedback.data.error).toBe('invalid_help_feedback');
+  });
+
   test('proxies map search, route, and nearest-road requests', async () => {
     const originalFetch = global.fetch;
     global.fetch = async (url, options) => {
