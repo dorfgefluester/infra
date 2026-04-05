@@ -3,6 +3,10 @@ const { pathToFileURL } = require('node:url');
 const pg = require('pg');
 
 const EXPECTED_TABLES = [
+  'help_documents',
+  'help_feedback',
+  'help_queries',
+  'help_telemetry_events',
   'password_reset_tokens',
   'player_profiles',
   'save_slots',

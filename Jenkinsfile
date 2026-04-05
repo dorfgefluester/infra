@@ -203,7 +203,7 @@ pipeline {
                               -e POSTGRES_DB=dorfgefluester \
                               -e POSTGRES_USER=dorfgefluester \
                               -e POSTGRES_PASSWORD=dorfgefluester-ci \
-                              postgres:16-alpine >/dev/null
+                              docker.io/pgvector/pgvector:pg16 >/dev/null
                             ready=0
                             for _ in $(seq 1 90); do
                               if ! docker ps --format '{{.Names}}' | grep -Fx "$migration_db_container" >/dev/null 2>&1; then
