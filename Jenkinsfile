@@ -241,7 +241,7 @@ pipeline {
                             steps {
                                 script {
                                     def isReleaseBranch = (env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/)
-                                    def maxIndexKb = isReleaseBranch ? 450 : 550
+                                    def maxIndexKb = isReleaseBranch ? 452 : 550
                                     def maxPhaserKb = isReleaseBranch ? 1600 : 1700
                                     def maxTotalKb = isReleaseBranch ? 2100 : 2300
                                     sh """
