@@ -68,6 +68,7 @@ describe('pipeline smoke contracts', () => {
     expect(packageJson.scripts.test).toBe('jest');
     expect(packageJson.scripts['test:e2e']).toBe('playwright test');
     expect(packageJson.scripts.lint).toBe('node scripts/quality/lint.cjs');
+    expect(packageJson.scripts['quality-check']).toBe('npm run quality:skills:local');
   });
 
   test('jenkins bundle budget check runs in the same containerized build context', () => {
@@ -83,9 +84,11 @@ describe('pipeline smoke contracts', () => {
 
     expect(jenkinsfile).toContain("stage('Database Migration Smoke Test')");
     expect(jenkinsfile).toContain('for _ in $(seq 1 90); do');
-    expect(jenkinsfile).toContain('docker network create "$migration_db_network"');
-    expect(jenkinsfile).toContain('--network "$migration_db_network"');
-    expect(jenkinsfile).toContain('@${migration_db_container}:5432/dorfgefluester');
+    expect(jenkinsfile).toContain('docker network rm "$migration_db_network"');
+    expect(jenkinsfile).toContain('docker exec "$migration_db_container"');
+    expect(jenkinsfile).toContain('pg_isready -h 127.0.0.1 -U dorfgefluester -d dorfgefluester');
+    expect(jenkinsfile).toContain('--network "container:$migration_db_container"');
+    expect(jenkinsfile).toContain('@127.0.0.1:5432/dorfgefluester');
     expect(jenkinsfile).toContain("sh -lc 'node scripts/quality/api-migration-smoke.cjs'");
   });
 
@@ -95,6 +98,17 @@ describe('pipeline smoke contracts', () => {
     expect(jenkinsfile).toContain("buildDiscarder(logRotator(daysToKeepStr: '7', numToKeepStr: '10', artifactDaysToKeepStr: '7', artifactNumToKeepStr: '5'))");
     expect(jenkinsfile).toContain('find "$CACHE_ROOT" -mindepth 1 -maxdepth 1 -type d ! -path "$JOB_CACHE_DIR" -mtime +7 -print');
     expect(jenkinsfile).toContain('cleanWs(deleteDirs: true, disableDeferredWipeout: true, notFailBuild: true)');
+  });
+
+  test('jenkins gitleaks scan excludes generated analysis artifacts from the workspace tarball', () => {
+    const jenkinsfile = readRepoFile('Jenkinsfile');
+
+    expect(jenkinsfile).toContain("stage('Gitleaks')");
+    expect(jenkinsfile).toContain("--exclude='./reports'");
+    expect(jenkinsfile).toContain("--exclude='./sonar-report.json'");
+    expect(jenkinsfile).toContain("--exclude='./report-task.txt'");
+    expect(jenkinsfile).toContain("--exclude='./build-meta.json'");
+    expect(jenkinsfile).toContain("--exclude='./build-meta.md'");
   });
 
   test('nginx runtime exposes health endpoints for root and prefixed deployments', () => {
