@@ -59,7 +59,7 @@ pipeline {
                     }
 
                     if (env.BUILD_ALLOWED == 'true') {
-                        def deployPipelinePath = 'jenkins/core-vitals-staging-deploy.Jenkinsfile'
+                        def deployPipelinePath = 'jenkins/dorfgefluester-staging-deploy.Jenkinsfile'
                         def changedPaths = []
 
                         try {
@@ -196,10 +196,8 @@ pipeline {
                             trap cleanup EXIT
                             docker rm -f "$migration_db_container" >/dev/null 2>&1 || true
                             docker network rm "$migration_db_network" >/dev/null 2>&1 || true
-                            docker network create "$migration_db_network" >/dev/null
                             docker run -d --rm \
                               --name "$migration_db_container" \
-                              --network "$migration_db_network" \
                               -e POSTGRES_DB=dorfgefluester \
                               -e POSTGRES_USER=dorfgefluester \
                               -e POSTGRES_PASSWORD=dorfgefluester-ci \
@@ -212,7 +210,9 @@ pipeline {
                                 docker logs "$migration_db_container" || true
                                 exit 1
                               fi
-                              if docker exec "$migration_db_container" pg_isready -U dorfgefluester -d dorfgefluester >/dev/null 2>&1; then
+                              if docker exec "$migration_db_container" \
+                                pg_isready -h 127.0.0.1 -U dorfgefluester -d dorfgefluester \
+                                >/dev/null 2>&1; then
                                 ready=1
                                 break
                               fi
@@ -223,10 +223,10 @@ pipeline {
                               echo "ERROR: postgres migration smoke container did not become ready."
                               exit 1
                             fi
-                            docker run --rm --network "$migration_db_network" -u "$(id -u):$(id -g)" \
+                            docker run --rm --network "container:$migration_db_container" -u "$(id -u):$(id -g)" \
                               -v "$WORKSPACE:/work" -w /work \
                               -e HOME=/tmp \
-                              -e DATABASE_URL="postgres://dorfgefluester:dorfgefluester-ci@${migration_db_container}:5432/dorfgefluester" \
+                              -e DATABASE_URL="postgres://dorfgefluester:dorfgefluester-ci@127.0.0.1:5432/dorfgefluester" \
                               node:20 \
                               sh -lc 'node scripts/quality/api-migration-smoke.cjs'
                         '''
@@ -729,6 +729,10 @@ exit 0
                                       --exclude='./.git' \
                                       --exclude='./.scannerwork' \
                                       --exclude='./playwright-report' \
+                                      --exclude='./sonar-report.json' \
+                                      --exclude='./report-task.txt' \
+                                      --exclude='./build-meta.json' \
+                                      --exclude='./build-meta.md' \
                                       --exclude='./tests/jenkins' \
                                       --exclude='./tests/test-results' \
                                       --exclude='./reports' \

@@ -39,6 +39,10 @@ describe('API server', () => {
     return {
       status: response.status,
       data,
+      headers: {
+        accessControlAllowOrigin: response.headers.get('access-control-allow-origin'),
+        accessControlAllowHeaders: response.headers.get('access-control-allow-headers'),
+      },
     };
   }
 
@@ -72,6 +76,7 @@ describe('API server', () => {
         apiPort: 0,
         databaseUrl: '',
         appOrigin: 'http://127.0.0.1:3000',
+        allowLocalDebugAuth: true,
         sessionCookieName: 'test_session',
         sessionTtlHours: 24,
         secureCookies: false,
