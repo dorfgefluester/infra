@@ -1,0 +1,57 @@
+{{- if ne .Values.deploymentMode "monolith" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dorfgefluester.webName" . }}
+  labels:
+    {{- include "dorfgefluester.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.web.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "dorfgefluester.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: web
+  template:
+    metadata:
+      labels:
+        {{- include "dorfgefluester.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: web
+      {{- if .Values.rolloutNonce }}
+      annotations:
+        dorfgefluester/rollout-nonce: {{ .Values.rolloutNonce | quote }}
+      {{- end }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: web
+          image: "{{ .Values.web.image.repository }}:{{ .Values.web.image.tag }}"
+          imagePullPolicy: {{ .Values.web.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 101
+            runAsGroup: 101
+          ports:
+            - containerPort: {{ .Values.web.containerPort }}
+          resources:
+            requests:
+              cpu: {{ .Values.web.resources.requests.cpu | quote }}
+              ephemeral-storage: {{ .Values.web.resources.requests.ephemeralStorage | quote }}
+              memory: {{ .Values.web.resources.requests.memory | quote }}
+            limits:
+              memory: {{ .Values.web.resources.limits.memory | quote }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.web.containerPort }}
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.web.containerPort }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+{{- end }}

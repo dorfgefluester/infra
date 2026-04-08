@@ -1,0 +1,49 @@
+{{- if .Values.worker.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dorfgefluester.workerName" . }}
+  labels:
+    {{- include "dorfgefluester.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.worker.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "dorfgefluester.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: worker
+  template:
+    metadata:
+      labels:
+        {{- include "dorfgefluester.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: worker
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: worker
+          image: "{{ .Values.api.image.repository }}:{{ .Values.api.image.tag }}"
+          imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+          command: ["node", "api/src/worker-cli.js"]
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: API_LOG_LEVEL
+              value: {{ .Values.api.env.logLevel | quote }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.api.runtimeSecret.name | quote }}
+                  key: {{ .Values.api.runtimeSecret.databaseUrlKey | quote }}
+            {{- if .Values.redis.enabled }}
+            - name: REDIS_URL
+              value: {{ printf "redis://%s:%v/0" (include "dorfgefluester.redisName" .) .Values.redis.service.port | quote }}
+            {{- end }}
+            - name: WORKER_MAINTENANCE_INTERVAL_MS
+              value: {{ .Values.worker.maintenanceIntervalMs | quote }}
+          resources:
+            requests:
+              cpu: {{ .Values.worker.resources.requests.cpu | quote }}
+              ephemeral-storage: {{ .Values.worker.resources.requests.ephemeralStorage | quote }}
+              memory: {{ .Values.worker.resources.requests.memory | quote }}
+            limits:
+              memory: {{ .Values.worker.resources.limits.memory | quote }}
+{{- end }}

@@ -1,0 +1,127 @@
+nameOverride: ""
+fullnameOverride: dorfgefluester
+namespace: ""
+deploymentMode: split
+
+web:
+  replicaCount: 1
+  image:
+    repository: dev-env-01:5000/dorfgefluester
+    tag: latest
+    pullPolicy: IfNotPresent
+  containerPort: 8080
+  service:
+    port: 80
+    apiPort: 3001
+  resources:
+    requests:
+      cpu: 100m
+      ephemeralStorage: 256Mi
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+api:
+  replicaCount: 1
+  image:
+    repository: dev-env-01:5000/dorfgefluester-api
+    tag: latest
+    pullPolicy: IfNotPresent
+  containerPort: 3001
+  service:
+    port: 3001
+  runtimeSecret:
+    name: dorfgefluester-postgres
+    databaseUrlKey: database-url
+  env:
+    appOrigin: https://dev-env-01
+    authRateLimitMax: "5"
+    authRateLimitWindowMs: "60000"
+    exposeResetTokens: false
+    localDebugAuth: false
+    logLevel: info
+    mapSearchCacheTtlSeconds: "900"
+    nearestRoadCacheTtlSeconds: "600"
+    posthogApiKey: ""
+    posthogHost: ""
+    routeCacheTtlSeconds: "600"
+    saveSlotCacheTtlSeconds: "30"
+    secureCookies: true
+    sessionCookieName: dorfgefluester_session
+    sessionTtlHours: 168
+  resources:
+    requests:
+      cpu: 100m
+      ephemeralStorage: 256Mi
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+postgres:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: docker.io/pgvector/pgvector
+    tag: "pg16"
+    pullPolicy: IfNotPresent
+  containerPort: 5432
+  service:
+    port: 5432
+  auth:
+    secretName: dorfgefluester-postgres
+    databaseKey: postgres-db
+    usernameKey: postgres-user
+    passwordKey: postgres-password
+  persistence:
+    enabled: true
+    size: 4Gi
+    storageClassName: ""
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+redis:
+  enabled: true
+  image:
+    repository: docker.io/library/redis
+    tag: "7-alpine"
+    pullPolicy: IfNotPresent
+  containerPort: 6379
+  service:
+    port: 6379
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      memory: 128Mi
+
+worker:
+  enabled: true
+  replicaCount: 1
+  maintenanceIntervalMs: "60000"
+  resources:
+    requests:
+      cpu: 50m
+      ephemeralStorage: 128Mi
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+
+rolloutNonce: ""
+
+ingress:
+  enabled: true
+  className: traefik
+  host: dev-env-01
+  path: /dorfgefluester
+  apiPath: /api
+  tls:
+    enabled: true
+    secretName: ""
+  stripPrefix:
+    enabled: false
+    forceSlash: false

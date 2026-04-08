@@ -289,8 +289,8 @@ Run this to automatically fix all issues:
 
 ```bash
 # Backup original
-mkdir -p jenkins/_archive
-cp Jenkinsfile jenkins/_archive/Jenkinsfile.backup
+mkdir -p infra/jenkins/_archive
+cp Jenkinsfile infra/jenkins/_archive/Jenkinsfile.backup
 
 # Apply fixes (this is a simplified example - manual review recommended)
 sed -i 's/sh """/sh '"'"'"'"'"'/g' Jenkinsfile  # Changes all to single quotes

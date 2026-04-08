@@ -1,0 +1,15 @@
+{{- if ne .Values.deploymentMode "monolith" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "dorfgefluester.webName" . }}
+  labels:
+    {{- include "dorfgefluester.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "dorfgefluester.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: web
+  ports:
+    - port: {{ .Values.web.service.port }}
+      targetPort: {{ .Values.web.containerPort }}
+{{- end }}

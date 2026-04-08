@@ -54,7 +54,7 @@ function changedAnnotationCount(root) {
       {
         id: 'code_health',
         title: 'Code Health',
-        skillFile: 'skills/code-health.md',
+        skillFile: 'config/skills/code-health.md',
         required: false,
       },
       `Annotation scan could not run cleanly.\n${tail(rg.stderr || rg.stdout)}`,
@@ -70,7 +70,7 @@ function changedAnnotationCount(root) {
       {
         id: 'code_health',
         title: 'Code Health',
-        skillFile: 'skills/code-health.md',
+        skillFile: 'config/skills/code-health.md',
         required: false,
       },
       'No TODO/FIXME/HACK/XXX markers found in src/, scripts/, or tests/.',
@@ -81,7 +81,7 @@ function changedAnnotationCount(root) {
     {
       id: 'code_health',
       title: 'Code Health',
-      skillFile: 'skills/code-health.md',
+      skillFile: 'config/skills/code-health.md',
       required: false,
     },
     `Found ${matches.length} annotation marker(s). Review whether they are still justified.\n${matches.slice(0, 10).join('\n')}`,
@@ -122,7 +122,7 @@ function inspectSecurityReports(root) {
     {
       id: 'security',
       title: 'Security',
-      skillFile: 'skills/security.md',
+      skillFile: 'config/skills/security.md',
       required: false,
     },
     messages.join('\n'),
@@ -139,7 +139,7 @@ function inspectUiEvidence(root) {
       {
         id: 'ui_ux',
         title: 'UI/UX',
-        skillFile: 'skills/ui-ux.md',
+        skillFile: 'config/skills/ui-ux.md',
         required: false,
       },
       'Playwright/browser evidence exists for this workspace.',
@@ -150,7 +150,7 @@ function inspectUiEvidence(root) {
     {
       id: 'ui_ux',
       title: 'UI/UX',
-      skillFile: 'skills/ui-ux.md',
+      skillFile: 'config/skills/ui-ux.md',
       required: false,
     },
     'No Playwright/browser evidence found in this workspace. Use dedicated UI/accessibility tests for UI-heavy changes.',

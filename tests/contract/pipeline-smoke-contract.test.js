@@ -112,7 +112,7 @@ describe('pipeline smoke contracts', () => {
   });
 
   test('nginx runtime exposes health endpoints for root and prefixed deployments', () => {
-    const nginxConfig = readRepoFile('nginx/default.conf');
+    const nginxConfig = readRepoFile('infra/nginx/default.conf');
 
     expect(nginxConfig).toContain('location /api/');
     expect(nginxConfig).toContain('location = /health');

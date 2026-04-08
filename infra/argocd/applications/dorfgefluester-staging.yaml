@@ -1,0 +1,21 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: dorfgefluester-staging
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/StephanOnTour/dorfgefluester.git
+    targetRevision: master
+    path: helm/dorfgefluester
+    helm:
+      releaseName: dorfgefluester
+      valueFiles:
+        - values-staging.yaml
+  destination:
+    server: https://192.168.1.136:6443
+    namespace: dorfgefluester
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true

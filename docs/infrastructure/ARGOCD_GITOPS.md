@@ -27,8 +27,8 @@ The staging Argo application must track `master`, not a release branch, if `mast
 
 ## Required Repo Manifests
 
-- Argo CD application: `argocd/dorfgefluester-staging.application.yaml`
-- Sealed Secret example: `argocd/sealed-secrets/dorfgefluester-postgres.sealedsecret.yaml.example`
+- Argo CD application: `infra/argocd/dorfgefluester-staging.application.yaml`
+- Sealed Secret example: `infra/argocd/sealed-secrets/dorfgefluester-postgres.sealedsecret.yaml.example`
 
 ## Step-By-Step Commands By Host
 
@@ -64,7 +64,7 @@ Verify the remote cluster is registered in Argo CD and apply the staging applica
 
 ```bash
 argocd cluster list
-sudo k3s kubectl apply -f argocd/dorfgefluester-staging.application.yaml
+sudo k3s kubectl apply -f infra/argocd/dorfgefluester-staging.application.yaml
 argocd app get dorfgefluester-staging
 argocd app diff dorfgefluester-staging
 ```
@@ -119,14 +119,14 @@ EOF
 Seal it against the cluster certificate and write the committed manifest:
 
 ```bash
-kubeseal --format yaml --cert /tmp/sealed-secrets-cert.pem < /tmp/dorfgefluester-postgres.secret.yaml > argocd/sealed-secrets/dorfgefluester-postgres.sealedsecret.yaml
+kubeseal --format yaml --cert /tmp/sealed-secrets-cert.pem < /tmp/dorfgefluester-postgres.secret.yaml > infra/argocd/sealed-secrets/dorfgefluester-postgres.sealedsecret.yaml
 rm -f /tmp/dorfgefluester-postgres.secret.yaml
 ```
 
 Commit the Argo CD app and Sealed Secret:
 
 ```bash
-git add argocd/dorfgefluester-staging.application.yaml argocd/sealed-secrets/dorfgefluester-postgres.sealedsecret.yaml
+git add infra/argocd/dorfgefluester-staging.application.yaml infra/argocd/sealed-secrets/dorfgefluester-postgres.sealedsecret.yaml
 git commit -m "Add Argo CD staging app and sealed secret"
 git push
 ```

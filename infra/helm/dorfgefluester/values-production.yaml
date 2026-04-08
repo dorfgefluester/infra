@@ -1,0 +1,25 @@
+namespace: production
+
+web:
+  image:
+    repository: dev-env-01:5000/dorfgefluester
+
+api:
+  image:
+    repository: dev-env-01:5000/dorfgefluester-api
+  env:
+    appOrigin: https://dorfgefluester.prod.example.com
+    localDebugAuth: false
+
+postgres:
+  enabled: true
+  auth:
+    secretName: dorfgefluester-postgres
+
+ingress:
+  host: dorfgefluester.prod.example.com
+  path: /dorfgefluester
+  apiPath: /api
+  tls:
+    enabled: true
+    secretName: ""

@@ -1,0 +1,94 @@
+{{- if eq .Values.deploymentMode "monolith" }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "dorfgefluester.monolithConfigName" . }}
+  labels:
+    {{- include "dorfgefluester.labels" . | nindent 4 }}
+data:
+  default.conf: |
+    server {
+      listen 8080;
+      server_name _;
+
+      root /usr/share/nginx/html;
+      index index.html;
+      add_header X-Content-Type-Options "nosniff" always;
+      add_header X-Frame-Options "DENY" always;
+      add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+      add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+      location = /api {
+        proxy_pass http://127.0.0.1:3001/api;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+      }
+
+      location /api/ {
+        proxy_pass http://127.0.0.1:3001/api/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+      }
+
+      location = /health {
+        access_log off;
+        default_type application/json;
+
+        if (!-f /usr/share/nginx/html/index.html) {
+          return 503 '{"status":"unhealthy"}';
+        }
+
+        return 200 '{"status":"healthy"}';
+      }
+
+      location = /healthz {
+        access_log off;
+        default_type application/json;
+
+        if (!-f /usr/share/nginx/html/index.html) {
+          return 503 '{"status":"unhealthy"}';
+        }
+
+        return 200 '{"status":"healthy"}';
+      }
+
+      location = /dorfgefluester {
+        return 301 /dorfgefluester/;
+      }
+
+      location = /dorfgefluester/health {
+        access_log off;
+        default_type application/json;
+
+        if (!-f /usr/share/nginx/html/index.html) {
+          return 503 '{"status":"unhealthy"}';
+        }
+
+        return 200 '{"status":"healthy"}';
+      }
+
+      location = /dorfgefluester/healthz {
+        access_log off;
+        default_type application/json;
+
+        if (!-f /usr/share/nginx/html/index.html) {
+          return 503 '{"status":"unhealthy"}';
+        }
+
+        return 200 '{"status":"healthy"}';
+      }
+
+      location /dorfgefluester/ {
+        rewrite ^/dorfgefluester/(.*)$ /$1 break;
+        try_files $uri $uri/ /index.html;
+      }
+
+      location / {
+        try_files $uri $uri/ /index.html;
+      }
+    }
+{{- end }}

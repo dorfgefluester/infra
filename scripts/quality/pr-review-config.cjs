@@ -5,15 +5,15 @@ const REVIEW_OUTCOME_VALUES = ['approve', 'request_changes', 'comment_only'];
 const QUALITY_SCORE_VALUES = ['A', 'B', 'C', 'D', 'E', 'F'];
 
 const SKILL_FILES = [
-  'skills/code-review.md',
-  'skills/architecture.md',
-  'skills/code-health.md',
-  'skills/security.md',
-  'skills/performance.md',
-  'skills/documentation.md',
-  'skills/testing.md',
-  'skills/ui-ux.md',
-  'skills/git-hygiene.md',
+  'config/skills/code-review.md',
+  'config/skills/architecture.md',
+  'config/skills/code-health.md',
+  'config/skills/security.md',
+  'config/skills/performance.md',
+  'config/skills/documentation.md',
+  'config/skills/testing.md',
+  'config/skills/ui-ux.md',
+  'config/skills/git-hygiene.md',
 ];
 
 const CHECKLIST_SECTIONS = [
