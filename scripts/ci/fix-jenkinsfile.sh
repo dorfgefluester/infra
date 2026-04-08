@@ -7,7 +7,7 @@
 set -e
 
 JENKINSFILE="Jenkinsfile"
-BACKUP_DIR="jenkins/_archive"
+BACKUP_DIR="infra/jenkins/_archive"
 BACKUP="${BACKUP_DIR}/Jenkinsfile.backup.$(date +%Y%m%d_%H%M%S)"
 
 echo "🔧 Fixing Jenkinsfile dollar sign issues..."

@@ -1,0 +1,15 @@
+{{- if .Values.postgres.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "dorfgefluester.postgresName" . }}
+  labels:
+    {{- include "dorfgefluester.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "dorfgefluester.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: postgres
+  ports:
+    - port: {{ .Values.postgres.service.port }}
+      targetPort: {{ .Values.postgres.containerPort }}
+{{- end }}

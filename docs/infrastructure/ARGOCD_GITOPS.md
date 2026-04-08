@@ -4,8 +4,8 @@ This is the target staging workflow for `dorfgefluester` on `dev-env-01`.
 
 ## Current Repo Assumptions
 
-- Helm chart path: `helm/dorfgefluester`
-- Staging values file: `helm/dorfgefluester/values-staging.yaml`
+- Helm chart path: `infra/helm/dorfgefluester`
+- Staging values file: `infra/helm/dorfgefluester/values-staging.yaml`
 - Staging namespace: `dorfgefluester`
 - Staging ingress URL: `http://dev-env-01/dorfgefluester/`
 - Runtime database secret expected by the chart: `dorfgefluester-postgres`
@@ -15,7 +15,7 @@ This is the target staging workflow for `dorfgefluester` on `dev-env-01`.
 
 1. Manually merge the release branch into `master`.
 2. Jenkins builds `master` and pushes immutable image tags.
-3. Jenkins updates `helm/dorfgefluester/values-staging.yaml` on `master` with the new image tag(s).
+3. Jenkins updates `infra/helm/dorfgefluester/values-staging.yaml` on `master` with the new image tag(s).
 4. Argo CD detects the Git change on `master` and shows `OutOfSync`.
 5. Review the Argo CD diff.
 6. Run a manual sync.
@@ -27,8 +27,8 @@ The staging Argo application must track `master`, not a release branch, if `mast
 
 ## Required Repo Manifests
 
-- Argo CD application: `argocd/dorfgefluester-staging.application.yaml`
-- Sealed Secret example: `argocd/sealed-secrets/dorfgefluester-postgres.sealedsecret.yaml.example`
+- Argo CD application: `infra/argocd/dorfgefluester-staging.application.yaml`
+- Sealed Secret example: `infra/argocd/sealed-secrets/dorfgefluester-postgres.sealedsecret.yaml.example`
 
 ## Step-By-Step Commands By Host
 
@@ -64,7 +64,7 @@ Verify the remote cluster is registered in Argo CD and apply the staging applica
 
 ```bash
 argocd cluster list
-sudo k3s kubectl apply -f argocd/dorfgefluester-staging.application.yaml
+sudo k3s kubectl apply -f infra/argocd/dorfgefluester-staging.application.yaml
 argocd app get dorfgefluester-staging
 argocd app diff dorfgefluester-staging
 ```
@@ -119,14 +119,14 @@ EOF
 Seal it against the cluster certificate and write the committed manifest:
 
 ```bash
-kubeseal --format yaml --cert /tmp/sealed-secrets-cert.pem < /tmp/dorfgefluester-postgres.secret.yaml > argocd/sealed-secrets/dorfgefluester-postgres.sealedsecret.yaml
+kubeseal --format yaml --cert /tmp/sealed-secrets-cert.pem < /tmp/dorfgefluester-postgres.secret.yaml > infra/argocd/sealed-secrets/dorfgefluester-postgres.sealedsecret.yaml
 rm -f /tmp/dorfgefluester-postgres.secret.yaml
 ```
 
 Commit the Argo CD app and Sealed Secret:
 
 ```bash
-git add argocd/dorfgefluester-staging.application.yaml argocd/sealed-secrets/dorfgefluester-postgres.sealedsecret.yaml
+git add infra/argocd/dorfgefluester-staging.application.yaml infra/argocd/sealed-secrets/dorfgefluester-postgres.sealedsecret.yaml
 git commit -m "Add Argo CD staging app and sealed secret"
 git push
 ```
@@ -184,7 +184,7 @@ After Argo-managed staging has succeeded once:
 
 1. Stop using `jenkins/dorfgefluester-staging-deploy.Jenkinsfile` for deployments.
 2. Keep Jenkins CI for build/test/push only.
-3. Update `helm/dorfgefluester/values-staging.yaml` in Git with immutable image tags from Jenkins.
+3. Update `infra/helm/dorfgefluester/values-staging.yaml` in Git with immutable image tags from Jenkins.
 4. Review the Argo diff and sync manually.
 
 Do not delete the old deploy pipeline until the first successful Argo-managed staging rollout is verified.

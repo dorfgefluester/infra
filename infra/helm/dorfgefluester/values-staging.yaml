@@ -1,0 +1,30 @@
+namespace: dorfgefluester
+deploymentMode: monolith
+
+web:
+  image:
+    repository: dev-env-01:5000/dorfgefluester
+    tag: 5093d38
+    pullPolicy: IfNotPresent
+
+api:
+  image:
+    repository: dev-env-01:5000/dorfgefluester-api
+    tag: 5093d38
+    pullPolicy: IfNotPresent
+  env:
+    appOrigin: http://dev-env-01
+
+postgres:
+  enabled: true
+  auth:
+    secretName: dorfgefluester-postgres
+
+ingress:
+  host: dev-env-01
+  path: /dorfgefluester
+  apiPath: /api
+  tls:
+    enabled: false
+  stripPrefix:
+    enabled: false

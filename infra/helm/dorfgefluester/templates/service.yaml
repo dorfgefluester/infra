@@ -1,0 +1,18 @@
+{{- if eq .Values.deploymentMode "monolith" }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "dorfgefluester.fullname" . }}
+  labels:
+    {{- include "dorfgefluester.labels" . | nindent 4 }}
+spec:
+  selector:
+    {{- include "dorfgefluester.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: web
+      port: {{ .Values.web.service.port }}
+      targetPort: {{ .Values.web.containerPort }}
+    - name: api
+      port: {{ .Values.web.service.apiPort }}
+      targetPort: {{ .Values.api.containerPort }}
+{{- end }}

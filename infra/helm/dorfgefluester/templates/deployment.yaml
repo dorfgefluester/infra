@@ -1,0 +1,138 @@
+{{- if eq .Values.deploymentMode "monolith" }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "dorfgefluester.fullname" . }}
+  labels:
+    {{- include "dorfgefluester.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.web.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "dorfgefluester.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "dorfgefluester.selectorLabels" . | nindent 8 }}
+      {{- if .Values.rolloutNonce }}
+      annotations:
+        dorfgefluester/rollout-nonce: {{ .Values.rolloutNonce | quote }}
+      {{- end }}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+      containers:
+        - name: web
+          image: "{{ .Values.web.image.repository }}:{{ .Values.web.image.tag }}"
+          imagePullPolicy: {{ .Values.web.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 101
+            runAsGroup: 101
+          ports:
+            - containerPort: {{ .Values.web.containerPort }}
+          volumeMounts:
+            - name: nginx-monolith-config
+              mountPath: /etc/nginx/conf.d/default.conf
+              subPath: default.conf
+          resources:
+            requests:
+              cpu: {{ .Values.web.resources.requests.cpu | quote }}
+              ephemeral-storage: {{ .Values.web.resources.requests.ephemeralStorage | quote }}
+              memory: {{ .Values.web.resources.requests.memory | quote }}
+            limits:
+              memory: {{ .Values.web.resources.limits.memory | quote }}
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.web.containerPort }}
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: {{ .Values.web.containerPort }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+        - name: api
+          image: "{{ .Values.api.image.repository }}:{{ .Values.api.image.tag }}"
+          imagePullPolicy: {{ .Values.api.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 1000
+            runAsGroup: 1000
+          ports:
+            - containerPort: {{ .Values.api.containerPort }}
+          env:
+            - name: NODE_ENV
+              value: production
+            - name: API_HOST
+              value: "0.0.0.0"
+            - name: API_PORT
+              value: {{ .Values.api.containerPort | quote }}
+            - name: APP_ORIGIN
+              value: {{ .Values.api.env.appOrigin | quote }}
+            - name: SESSION_COOKIE_NAME
+              value: {{ .Values.api.env.sessionCookieName | quote }}
+            - name: SESSION_TTL_HOURS
+              value: {{ .Values.api.env.sessionTtlHours | quote }}
+            - name: SECURE_COOKIES
+              value: {{ .Values.api.env.secureCookies | quote }}
+            - name: LOCAL_DEBUG_AUTH
+              value: {{ .Values.api.env.localDebugAuth | quote }}
+            - name: EXPOSE_RESET_TOKENS
+              value: {{ .Values.api.env.exposeResetTokens | quote }}
+            - name: API_LOG_LEVEL
+              value: {{ .Values.api.env.logLevel | quote }}
+            - name: AUTH_RATE_LIMIT_WINDOW_MS
+              value: {{ .Values.api.env.authRateLimitWindowMs | quote }}
+            - name: AUTH_RATE_LIMIT_MAX
+              value: {{ .Values.api.env.authRateLimitMax | quote }}
+            - name: MAP_SEARCH_CACHE_TTL_SECONDS
+              value: {{ .Values.api.env.mapSearchCacheTtlSeconds | quote }}
+            - name: ROUTE_CACHE_TTL_SECONDS
+              value: {{ .Values.api.env.routeCacheTtlSeconds | quote }}
+            - name: NEAREST_ROAD_CACHE_TTL_SECONDS
+              value: {{ .Values.api.env.nearestRoadCacheTtlSeconds | quote }}
+            - name: SAVE_SLOT_CACHE_TTL_SECONDS
+              value: {{ .Values.api.env.saveSlotCacheTtlSeconds | quote }}
+            - name: POSTHOG_HOST
+              value: {{ .Values.api.env.posthogHost | quote }}
+            - name: POSTHOG_API_KEY
+              value: {{ .Values.api.env.posthogApiKey | quote }}
+            {{- if .Values.redis.enabled }}
+            - name: REDIS_URL
+              value: {{ printf "redis://%s:%v/0" (include "dorfgefluester.redisName" .) .Values.redis.service.port | quote }}
+            {{- end }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.api.runtimeSecret.name | quote }}
+                  key: {{ .Values.api.runtimeSecret.databaseUrlKey | quote }}
+          resources:
+            requests:
+              cpu: {{ .Values.api.resources.requests.cpu | quote }}
+              ephemeral-storage: {{ .Values.api.resources.requests.ephemeralStorage | quote }}
+              memory: {{ .Values.api.resources.requests.memory | quote }}
+            limits:
+              memory: {{ .Values.api.resources.limits.memory | quote }}
+          readinessProbe:
+            httpGet:
+              path: /api/readiness
+              port: {{ .Values.api.containerPort }}
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /api/health
+              port: {{ .Values.api.containerPort }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+      volumes:
+        - name: nginx-monolith-config
+          configMap:
+            name: {{ include "dorfgefluester.monolithConfigName" . }}
+{{- end }}

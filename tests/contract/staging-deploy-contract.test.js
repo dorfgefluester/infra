@@ -11,7 +11,7 @@ function readRepoFile(relativePath) {
 
 describe('staging deploy contracts', () => {
   test('registry tag verification keeps per-image tag lookups intact over ssh', () => {
-    const jenkinsfile = readRepoFile('jenkins/dorfgefluester-staging-deploy.Jenkinsfile');
+    const jenkinsfile = readRepoFile('infra/jenkins/dorfgefluester-staging-deploy.Jenkinsfile');
 
     expect(jenkinsfile).toContain("stage('Verify IMAGE_TAG Exists In Registry')");
     expect(jenkinsfile).toContain('for image in ${WEB_IMAGE_NAME} ${API_IMAGE_NAME}; do');
@@ -21,7 +21,7 @@ describe('staging deploy contracts', () => {
   });
 
   test('staging deploy cleanup uses values overlays, external secrets, and workspace cleanup', () => {
-    const jenkinsfile = readRepoFile('jenkins/dorfgefluester-staging-deploy.Jenkinsfile');
+    const jenkinsfile = readRepoFile('infra/jenkins/dorfgefluester-staging-deploy.Jenkinsfile');
 
     expect(jenkinsfile).toContain('archiveArtifacts artifacts: \'reports/**/*\'');
     expect(jenkinsfile).toContain('values-staging.yaml');
@@ -32,7 +32,7 @@ describe('staging deploy contracts', () => {
   });
 
   test('production deploy uses the same per-image registry verification and values overlay pattern', () => {
-    const jenkinsfile = readRepoFile('jenkins/dorfgefluester-production-deploy.Jenkinsfile');
+    const jenkinsfile = readRepoFile('infra/jenkins/dorfgefluester-production-deploy.Jenkinsfile');
 
     expect(jenkinsfile).toContain("stage('Verify IMAGE_TAG Exists In Registry')");
     expect(jenkinsfile).toContain('for image in ${WEB_IMAGE_NAME} ${API_IMAGE_NAME}; do');
@@ -46,7 +46,7 @@ describe('staging deploy contracts', () => {
   test('main Jenkinsfile only skips builds when the dorfgefluester staging deploy pipeline alone changed', () => {
     const jenkinsfile = readRepoFile('Jenkinsfile');
 
-    expect(jenkinsfile).toContain("def deployPipelinePath = 'jenkins/dorfgefluester-staging-deploy.Jenkinsfile'");
+    expect(jenkinsfile).toContain("def deployPipelinePath = 'infra/jenkins/dorfgefluester-staging-deploy.Jenkinsfile'");
     expect(jenkinsfile).toContain('if (changedPath != deployPipelinePath)');
     expect(jenkinsfile).toContain('echo "Skipping build: only ${deployPipelinePath} changed."');
   });

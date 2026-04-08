@@ -1,0 +1,42 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "dorfgefluester.fullname" . }}
+  labels:
+    {{- include "dorfgefluester.labels" . | nindent 4 }}
+  {{- if .Values.ingress.stripPrefix.enabled }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: {{ printf "%s-%s@kubernetescrd" .Release.Namespace (include "dorfgefluester.middlewareName" .) | quote }}
+  {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className | default "traefik" | quote }}
+  rules:
+    - http:
+        paths:
+          - path: {{ .Values.ingress.apiPath | default "/api" | quote }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ if eq .Values.deploymentMode "monolith" }}{{ include "dorfgefluester.fullname" . }}{{ else }}{{ include "dorfgefluester.apiName" . }}{{ end }}
+                port:
+                  number: {{ if eq .Values.deploymentMode "monolith" }}{{ .Values.web.service.apiPort }}{{ else }}{{ .Values.api.service.port }}{{ end }}
+          - path: {{ .Values.ingress.path | default "/" | quote }}
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ if eq .Values.deploymentMode "monolith" }}{{ include "dorfgefluester.fullname" . }}{{ else }}{{ include "dorfgefluester.webName" . }}{{ end }}
+                port:
+                  number: {{ .Values.web.service.port }}
+      {{- if .Values.ingress.host }}
+      host: {{ .Values.ingress.host | quote }}
+      {{- end }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host | quote }}
+      {{- if .Values.ingress.tls.secretName }}
+      secretName: {{ .Values.ingress.tls.secretName | quote }}
+      {{- end }}
+  {{- end }}
+{{- end }}

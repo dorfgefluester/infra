@@ -1,0 +1,533 @@
+pipeline {
+    agent any
+
+    environment {
+        // Project configuration
+        PROJECT_NAME = 'dorfgefluester'
+        NODE_VERSION = '18'
+
+        // Version and tagging
+        VERSION = sh(script: "grep '\"version\"' package.json | cut -d'\"' -f4", returnStdout: true).trim()
+        GIT_SHORT_COMMIT = sh(script: "git rev-parse --short HEAD", returnStdout: true).trim()
+        BUILD_TAG = "${VERSION}-${BUILD_NUMBER}-${GIT_SHORT_COMMIT}"
+
+        // Container configuration
+        CONTAINER_CMD = 'podman'
+        REGISTRY_URL = 'docker.io'
+        REGISTRY_NAMESPACE = 'myaccount'
+        IMAGE_NAME = "${REGISTRY_NAMESPACE}/${PROJECT_NAME}"
+        IMAGE_TAG = "${BUILD_TAG}"
+        FULL_IMAGE_NAME = "${REGISTRY_URL}/${IMAGE_NAME}:${IMAGE_TAG}"
+        LATEST_IMAGE_NAME = "${REGISTRY_URL}/${IMAGE_NAME}:latest"
+
+        // Remote scanning server (centralized like SonarQube)
+        SCAN_SERVER = 'docker'
+        SCAN_SERVER_USER = 'jenkins'
+        SCAN_SCRIPT = '/opt/scans/scripts/scan-security.sh'
+        REPORT_URL = 'http://docker:8080'
+
+        // Build configuration
+        DIST_DIR = "${WORKSPACE}/dist"
+        ASSETS_DIR = "${WORKSPACE}/public/assets"
+        MAX_BUNDLE_SIZE_MB = '5'
+        MAX_ASSET_SIZE_MB = '50'
+    }
+
+    options {
+        buildDiscarder(logRotator(daysToKeepStr: '7', numToKeepStr: '10', artifactDaysToKeepStr: '7', artifactNumToKeepStr: '5'))
+        timeout(time: 1, unit: 'HOURS')
+        timestamps()
+        disableConcurrentBuilds()
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                echo '📥 Checking out source code...'
+                checkout scm
+
+                script {
+                    env.GIT_COMMIT_SHORT = sh(
+                        script: "git rev-parse --short HEAD",
+                        returnStdout: true
+                    ).trim()
+                    env.GIT_BRANCH = sh(
+                        script: "git rev-parse --abbrev-ref HEAD",
+                        returnStdout: true
+                    ).trim()
+                }
+
+                echo "✅ Checked out ${env.GIT_BRANCH} @ ${env.GIT_COMMIT_SHORT}"
+            }
+        }
+
+        stage('Setup') {
+            steps {
+                echo '🔧 Setting up environment...'
+
+                sh """
+                    echo "📊 Build Information:"
+                    echo "  Project: ${PROJECT_NAME}"
+                    echo "  Version: ${VERSION}"
+                    echo "  Build: #${BUILD_NUMBER}"
+                    echo "  Tag: ${BUILD_TAG}"
+                    echo "  Image: ${FULL_IMAGE_NAME}"
+                    echo "  Node: \$(node --version)"
+                    echo "  npm: \$(npm --version)"
+                    echo "  ${CONTAINER_CMD}: \$(${CONTAINER_CMD} --version | head -n1)"
+                    echo "  Scan Server: ${SCAN_SERVER}"
+                """
+            }
+        }
+
+        stage('Install Dependencies') {
+            steps {
+                echo '📦 Installing npm dependencies...'
+
+                script {
+                    def startTime = System.currentTimeMillis()
+                    sh 'npm ci --prefer-offline --no-audit'
+                    def duration = (System.currentTimeMillis() - startTime) / 1000
+                    echo "✅ Dependencies installed in ${duration}s"
+                }
+            }
+        }
+
+        stage('Code Quality') {
+            parallel {
+                stage('ESLint') {
+                    when {
+                        expression { fileExists('.eslintrc.js') || fileExists('.eslintrc.json') }
+                    }
+                    steps {
+                        echo '🔍 Running ESLint...'
+                        sh 'npm run lint --if-present || npx eslint src/ || true'
+                    }
+                }
+
+                stage('Validate Assets') {
+                    steps {
+                        echo '🎨 Validating game assets...'
+                        sh """
+                            echo "📊 Asset inventory:"
+                            find ${ASSETS_DIR} -type f -name "*.png" | wc -l | xargs echo "  PNG images:"
+                            find ${ASSETS_DIR} -type f -name "*.json" | wc -l | xargs echo "  JSON files:"
+
+                            ASSET_SIZE=\$(du -sm ${ASSETS_DIR} | cut -f1)
+                            echo "  Total size: \${ASSET_SIZE}MB"
+                        """
+                    }
+                }
+            }
+        }
+
+        stage('Lint & Validate') {
+            parallel {
+                stage('Validate Prototype') {
+                    steps {
+                        echo '🔍 Running prototype validation...'
+                        sh 'npm run validate'
+                    }
+                }
+
+                stage('Validate Translations') {
+                    steps {
+                        echo '🌐 Running translation validation...'
+                        sh 'npm run validate-translations'
+                    }
+                }
+
+                stage('npm audit') {
+                    steps {
+                        echo '🔒 Running npm audit...'
+                        script {
+                            def auditResult = sh(
+                                script: 'npm audit --json > npm-audit.json',
+                                returnStatus: true
+                            )
+
+                            sh """
+                                echo "📊 npm audit results:"
+                                cat npm-audit.json | jq -r '.metadata | "Vulnerabilities: \\(.vulnerabilities.total) (Critical: \\(.vulnerabilities.critical), High: \\(.vulnerabilities.high))"'
+                            """
+
+                            if (auditResult != 0) {
+                                unstable(message: 'npm audit found vulnerabilities')
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Tests') {
+            parallel {
+                stage('Unit Tests') {
+                    steps {
+                        echo '🧪 Running Jest unit tests...'
+                        sh 'npm test -- --ci --coverage --maxWorkers=2'
+                    }
+                    post {
+                        always {
+                            publishHTML([
+                                reportDir: 'tests/coverage/lcov-report',
+                                reportFiles: 'index.html',
+                                reportName: 'Code Coverage',
+                                keepAll: true
+                            ])
+                        }
+                    }
+                }
+
+                stage('E2E Tests') {
+                    when {
+                        expression {
+                            return env.BRANCH_NAME ==~ /(master|main|develop)/ || env.CHANGE_TARGET
+                        }
+                    }
+                    steps {
+                        echo '🎭 Running Playwright E2E tests...'
+                        sh 'npm run test:e2e'
+                    }
+                }
+            }
+        }
+
+        stage('Build') {
+            steps {
+                echo '🏗️ Building production bundle...'
+
+                script {
+                    def startTime = System.currentTimeMillis()
+                    sh 'npm run build'
+                    def duration = (System.currentTimeMillis() - startTime) / 1000
+
+                    sh """
+                        echo "✅ Build completed in ${duration}s"
+                        echo "📊 Build Analysis:"
+                        echo "  Files: \$(find ${DIST_DIR} -type f | wc -l)"
+
+                        BUNDLE_SIZE=\$(du -sm ${DIST_DIR} | cut -f1)
+                        echo "  Bundle size: \${BUNDLE_SIZE}MB"
+
+                        if [ "\$BUNDLE_SIZE" -gt "${MAX_BUNDLE_SIZE_MB}" ]; then
+                            echo "⚠️ Bundle exceeds ${MAX_BUNDLE_SIZE_MB}MB"
+                        fi
+                    """
+                }
+            }
+            post {
+                success {
+                    archiveArtifacts artifacts: 'dist/**/*', fingerprint: true
+                }
+            }
+        }
+
+        stage('Build Container Image') {
+            steps {
+                echo '🐳 Building container image...'
+
+                script {
+                    // Create Dockerfile if needed
+                    if (!fileExists('Dockerfile')) {
+                        sh """
+                            cat > Dockerfile <<'EOF'
+FROM docker.io/nginx:alpine
+COPY dist/ /usr/share/nginx/html/
+COPY nginx.conf /etc/nginx/conf.d/default.conf 2>/dev/null || true
+EXPOSE 80
+HEALTHCHECK CMD wget --quiet --tries=1 --spider http://localhost/ || exit 1
+CMD ["nginx", "-g", "daemon off;"]
+EOF
+                        """
+                    }
+
+                    // Create nginx config if needed
+                    if (!fileExists('nginx.conf')) {
+                        sh """
+                            cat > nginx.conf <<'EOF'
+server {
+    listen 80;
+    root /usr/share/nginx/html;
+    index index.html;
+    gzip on;
+    gzip_types text/plain text/css application/json application/javascript;
+    location ~* \\.(js|css|png|jpg|jpeg|gif|ico|svg)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+    location / {
+        try_files \\$uri \\$uri/ /index.html;
+    }
+}
+EOF
+                        """
+                    }
+
+                    // Build image
+                    sh """
+                        ${CONTAINER_CMD} build \\
+                            --tag ${FULL_IMAGE_NAME} \\
+                            --tag ${LATEST_IMAGE_NAME} \\
+                            --label "version=${VERSION}" \\
+                            --label "build=${BUILD_NUMBER}" \\
+                            --label "commit=${GIT_SHORT_COMMIT}" \\
+                            .
+                    """
+
+                    echo "✅ Image built: ${FULL_IMAGE_NAME}"
+                    sh "${CONTAINER_CMD} images ${IMAGE_NAME}"
+                }
+            }
+        }
+
+        stage('Test Container Locally') {
+            steps {
+                echo '🧪 Testing container image locally...'
+
+                script {
+                    // Start container
+                    sh """
+                        ${CONTAINER_CMD} run -d \\
+                            --name ${PROJECT_NAME}-test-${BUILD_NUMBER} \\
+                            -p 8888:80 \\
+                            ${FULL_IMAGE_NAME}
+                    """
+
+                    // Wait for container to be ready
+                    sh 'sleep 3'
+
+                    // Test HTTP endpoint
+                    def testResult = sh(
+                        script: 'curl -f http://localhost:8888/ > /dev/null 2>&1',
+                        returnStatus: true
+                    )
+
+                    // Stop and remove test container
+                    sh """
+                        ${CONTAINER_CMD} stop ${PROJECT_NAME}-test-${BUILD_NUMBER}
+                        ${CONTAINER_CMD} rm ${PROJECT_NAME}-test-${BUILD_NUMBER}
+                    """
+
+                    if (testResult != 0) {
+                        error('Container health check failed')
+                    }
+
+                    echo '✅ Container test passed'
+                }
+            }
+        }
+
+        stage('Push Container Image') {
+            when {
+                anyOf {
+                    branch 'master'
+                    branch 'main'
+                    branch pattern: 'release/.*', comparator: 'REGEXP'
+                }
+            }
+            steps {
+                echo '📤 Pushing container image...'
+
+                script {
+                    withCredentials([usernamePassword(
+                        credentialsId: 'container-registry-credentials',
+                        usernameVariable: 'REGISTRY_USER',
+                        passwordVariable: 'REGISTRY_PASS'
+                    )]) {
+                        sh """
+                            echo "\$REGISTRY_PASS" | ${CONTAINER_CMD} login ${REGISTRY_URL} -u "\$REGISTRY_USER" --password-stdin
+                            ${CONTAINER_CMD} push ${FULL_IMAGE_NAME}
+                            ${CONTAINER_CMD} push ${LATEST_IMAGE_NAME}
+                            ${CONTAINER_CMD} logout ${REGISTRY_URL}
+                        """
+                    }
+
+                    echo "✅ Images pushed:"
+                    echo "   ${FULL_IMAGE_NAME}"
+                    echo "   ${LATEST_IMAGE_NAME}"
+                }
+            }
+        }
+
+        stage('Trigger Remote Security Scan') {
+            steps {
+                echo "🔒 Triggering security scan on ${SCAN_SERVER}..."
+
+                script {
+                    // SSH to remote server and trigger scan
+                    withCredentials([sshUserPrivateKey(credentialsId: 'jenkins-ssh-key', keyFileVariable: 'SSH_KEY')]) {
+                        sh """
+                            ssh -i "${SSH_KEY}" -o StrictHostKeyChecking=no ${SCAN_SERVER_USER}@${SCAN_SERVER} \
+                            '${SCAN_SCRIPT} --full'
+                        """
+                    }
+
+                    echo "✅ Remote scan triggered"
+                    echo "📊 View reports at: ${REPORT_URL}/latest/summary.html"
+                }
+            }
+        }
+
+        stage('Fetch Remote Scan Results') {
+            steps {
+                echo '📥 Fetching scan results from remote server...'
+
+                script {
+                    // Create local reports directory
+                    sh 'mkdir -p security-reports'
+
+                    // Fetch latest reports via SSH
+                    withCredentials([sshUserPrivateKey(credentialsId: 'jenkins-ssh-key', keyFileVariable: 'SSH_KEY')]) {
+                        sh """
+                            # Fetch DependencyCheck report
+                            scp -i "${SSH_KEY}" -o StrictHostKeyChecking=no \
+                                ${SCAN_SERVER_USER}@${SCAN_SERVER}:/opt/scans/reports/dependency-check/latest/*.html \
+                                security-reports/dependency-check-report.html || true
+
+                            # Fetch Trivy report
+                            scp -i "${SSH_KEY}" -o StrictHostKeyChecking=no \
+                                ${SCAN_SERVER_USER}@${SCAN_SERVER}:/opt/scans/reports/trivy/latest/report.html \
+                                security-reports/trivy-report.html || true
+
+                            # Fetch SBOM
+                            scp -i "${SSH_KEY}" -o StrictHostKeyChecking=no \
+                                ${SCAN_SERVER_USER}@${SCAN_SERVER}:/opt/scans/reports/sbom/SBOM.json \
+                                security-reports/SBOM.json || true
+
+                            # Fetch JSON reports for parsing
+                            scp -i "${SSH_KEY}" -o StrictHostKeyChecking=no \
+                                ${SCAN_SERVER_USER}@${SCAN_SERVER}:/opt/scans/reports/trivy/latest/vuln.json \
+                                security-reports/trivy-vuln.json || true
+                        """
+                    }
+
+                    echo '✅ Reports fetched'
+                }
+            }
+        }
+
+        stage('Analyze Scan Results') {
+            steps {
+                echo '📊 Analyzing security scan results...'
+
+                script {
+                    // Check for critical/high vulnerabilities in Trivy report
+                    if (fileExists('security-reports/trivy-vuln.json')) {
+                        def criticalCount = sh(
+                            script: """
+                                cat security-reports/trivy-vuln.json | \
+                                jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL" or .Severity=="HIGH")] | length'
+                            """,
+                            returnStdout: true
+                        ).trim()
+
+                        echo "📊 Found ${criticalCount} CRITICAL/HIGH vulnerabilities"
+
+                        if (criticalCount.toInteger() > 0) {
+                            unstable(message: "Security scan found ${criticalCount} CRITICAL/HIGH vulnerabilities")
+                        }
+                    }
+
+                    // Create summary
+                    sh """
+                        cat > security-reports/summary.html <<'EOF'
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Security Scan Summary - Build #${BUILD_NUMBER}</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        h1 { color: #333; }
+        .info { background: #e3f2fd; padding: 15px; margin: 10px 0; border-left: 4px solid #1976d2; }
+        .warning { background: #fff3e0; padding: 15px; margin: 10px 0; border-left: 4px solid #f57c00; }
+        a { color: #1976d2; }
+    </style>
+</head>
+<body>
+    <h1>🔒 Security Scan Summary</h1>
+
+    <div class="info">
+        <p><strong>Project:</strong> ${PROJECT_NAME}</p>
+        <p><strong>Build:</strong> #${BUILD_NUMBER}</p>
+        <p><strong>Branch:</strong> ${env.GIT_BRANCH}</p>
+        <p><strong>Commit:</strong> ${env.GIT_COMMIT_SHORT}</p>
+        <p><strong>Scan Server:</strong> ${SCAN_SERVER}</p>
+    </div>
+
+    <h2>📊 Reports</h2>
+    <p>Full reports available on scan server:</p>
+    <ul>
+        <li><a href="${REPORT_URL}/dependency-check/" target="_blank">OWASP DependencyCheck</a></li>
+        <li><a href="${REPORT_URL}/trivy/" target="_blank">Trivy Security Scan</a></li>
+        <li><a href="${REPORT_URL}/sbom/SBOM.json" target="_blank">SBOM (CycloneDX)</a></li>
+        <li><a href="${REPORT_URL}/latest/summary.html" target="_blank">Latest Scan Summary</a></li>
+    </ul>
+
+    <h2>📋 Cached Reports</h2>
+    <p>Archived in Jenkins:</p>
+    <ul>
+        <li><a href="dependency-check-report.html">DependencyCheck Report (Cached)</a></li>
+        <li><a href="trivy-report.html">Trivy Report (Cached)</a></li>
+        <li><a href="SBOM.json">SBOM (Cached)</a></li>
+    </ul>
+
+    <div class="warning">
+        <p><strong>⚠️ Note:</strong> Scans run on centralized server (${SCAN_SERVER})</p>
+        <p>For real-time results, visit: <a href="${REPORT_URL}" target="_blank">${REPORT_URL}</a></p>
+    </div>
+</body>
+</html>
+EOF
+                    """
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            echo '📦 Archiving artifacts and reports...'
+
+            // Archive cached security reports
+            archiveArtifacts artifacts: 'security-reports/**/*',
+                             fingerprint: true,
+                             allowEmptyArchive: true
+
+            // Archive npm audit
+            archiveArtifacts artifacts: 'npm-audit.json',
+                             fingerprint: true,
+                             allowEmptyArchive: true
+
+            // Archive build artifacts
+            archiveArtifacts artifacts: 'dist/**/*',
+                             fingerprint: true,
+                             allowEmptyArchive: true
+
+            // Publish HTML summary
+            publishHTML([
+                reportDir: 'security-reports',
+                reportFiles: 'summary.html',
+                reportName: 'Security Summary',
+                keepAll: true,
+                alwaysLinkToLastBuild: true
+            ])
+
+            cleanWs(deleteDirs: true, disableDeferredWipeout: true, notFailBuild: true)
+        }
+
+        success {
+            echo '✅ Pipeline completed successfully!'
+            echo "📊 View security reports: ${REPORT_URL}/latest/summary.html"
+        }
+
+        failure {
+            echo '❌ Pipeline failed!'
+        }
+
+        unstable {
+            echo '⚠️ Pipeline unstable - security issues found'
+            echo "📊 Review reports: ${REPORT_URL}/latest/summary.html"
+        }
+    }
+}

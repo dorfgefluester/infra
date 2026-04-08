@@ -1,0 +1,13 @@
+{{- if and .Values.ingress.enabled .Values.ingress.stripPrefix.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ include "dorfgefluester.middlewareName" . }}
+  labels:
+    {{- include "dorfgefluester.labels" . | nindent 4 }}
+spec:
+  stripPrefix:
+    forceSlash: {{ .Values.ingress.stripPrefix.forceSlash }}
+    prefixes:
+      - {{ .Values.ingress.path | quote }}
+{{- end }}

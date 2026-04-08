@@ -126,7 +126,7 @@ environment {
 
 1. New Item → Multibranch Pipeline
 2. Branch Sources → Add Git repository
-3. Script Path: `Jenkinsfile.remote`
+3. Script Path: `infra/jenkins/Jenkinsfile.remote`
 4. Save and scan repository
 
 ---
@@ -351,7 +351,7 @@ post {
 
 **Pro tip:** You can use both! Rename to:
 - `Jenkinsfile.local` - For feature branches
-- `Jenkinsfile.remote` - For master/main branch
+- `infra/jenkins/Jenkinsfile.remote` - For master/main branch
 
 ---
 

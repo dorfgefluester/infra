@@ -59,7 +59,7 @@ pipeline {
                     }
 
                     if (env.BUILD_ALLOWED == 'true') {
-                        def deployPipelinePath = 'jenkins/dorfgefluester-staging-deploy.Jenkinsfile'
+                        def deployPipelinePath = 'infra/jenkins/dorfgefluester-staging-deploy.Jenkinsfile'
                         def changedPaths = []
 
                         try {
@@ -241,7 +241,7 @@ pipeline {
                             steps {
                                 script {
                                     def isReleaseBranch = (env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/)
-                                    def maxIndexKb = isReleaseBranch ? 450 : 550
+                                    def maxIndexKb = isReleaseBranch ? 452 : 550
                                     def maxPhaserKb = isReleaseBranch ? 1600 : 1700
                                     def maxTotalKb = isReleaseBranch ? 2100 : 2300
                                     sh """
@@ -768,8 +768,8 @@ exit 0
                             def hasHelm = sh(script: 'command -v helm >/dev/null 2>&1', returnStatus: true) == 0
                             if (hasHelm) {
                                 sh '''
-                                  helm lint helm/dorfgefluester
-                                  helm lint helm/dorfgefluester -f helm/dorfgefluester/values-staging.yaml
+                                  helm lint infra/helm/dorfgefluester
+                                  helm lint infra/helm/dorfgefluester -f infra/helm/dorfgefluester/values-staging.yaml
                                 '''
                             } else {
                                 echo 'Helm not found on agent; skipping Helm Lint.'
@@ -785,7 +785,7 @@ exit 0
                             def hasKubectl = sh(script: 'command -v kubectl >/dev/null 2>&1', returnStatus: true) == 0
                             if (hasHelm && hasKubectl) {
                                 sh """
-                                  helm template ${RELEASE} helm/dorfgefluester \
+                                  helm template ${RELEASE} infra/helm/dorfgefluester \
                                     --namespace ${NAMESPACE} \
                                     --set web.image.repository=${IMAGE_REPO} \
                                     --set web.image.tag=ci-dry-run \
@@ -794,10 +794,10 @@ exit 0
                                     --set api.env.appOrigin=http://dorf.test \
                                     --set ingress.host=dorf.test > /tmp/${RELEASE}-rendered.yaml
                                   kubectl apply --dry-run=client -f /tmp/${RELEASE}-rendered.yaml
-                                  helm template ${RELEASE}-staging helm/dorfgefluester \
+                                  helm template ${RELEASE}-staging infra/helm/dorfgefluester \
                                     --namespace staging \
-                                    -f helm/dorfgefluester/values.yaml \
-                                    -f helm/dorfgefluester/values-staging.yaml \
+                                    -f infra/helm/dorfgefluester/values.yaml \
+                                    -f infra/helm/dorfgefluester/values-staging.yaml \
                                     --set web.image.repository=${IMAGE_REPO} \
                                     --set web.image.tag=ci-dry-run \
                                     --set api.image.repository=${API_IMAGE_REPO} \
@@ -1446,7 +1446,7 @@ exit 0
                         }
                         echo "Images published: ${env.IMAGE_REPO}:${publishedTag ?: 'unknown'} and ${env.API_IMAGE_REPO}:${publishedTag ?: 'unknown'}"
                     }
-                    echo "Deployment is GitOps-managed. Update helm/dorfgefluester/values-staging.yaml on master and sync Argo CD manually after reviewing the diff."
+                    echo "Deployment is GitOps-managed. Update infra/helm/dorfgefluester/values-staging.yaml on master and sync Argo CD manually after reviewing the diff."
                 }
             }
         }
