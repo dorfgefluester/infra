@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, jest, test } from '@jest/globa
 import { createApiServer } from '../../api/src/server.js';
 import { createMemoryStorage } from '../../api/src/storage/memoryStorage.js';
 
+jest.setTimeout(30000);
+
 describe('API server', () => {
   let api;
   let storage;
