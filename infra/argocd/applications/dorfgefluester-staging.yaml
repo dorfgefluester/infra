@@ -8,7 +8,7 @@ spec:
   source:
     repoURL: https://github.com/StephanOnTour/dorfgefluester.git
     targetRevision: master
-    path: helm/dorfgefluester
+    path: infra/helm/dorfgefluester
     helm:
       releaseName: dorfgefluester
       valueFiles:
