@@ -83,10 +83,14 @@ describe('pipeline smoke contracts', () => {
     const jenkinsfile = readRepoFile('Jenkinsfile');
 
     expect(jenkinsfile).toContain("stage('Database Migration Smoke Test')");
+    expect(jenkinsfile).toContain('migration_db_image="docker.io/pgvector/pgvector:0.8.2-pg16"');
+    expect(jenkinsfile).toContain('for start_attempt in $(seq 1 3); do');
     expect(jenkinsfile).toContain('for _ in $(seq 1 90); do');
     expect(jenkinsfile).toContain('docker network rm "$migration_db_network"');
     expect(jenkinsfile).toContain('docker exec "$migration_db_container"');
     expect(jenkinsfile).toContain('pg_isready -h 127.0.0.1 -U dorfgefluester -d dorfgefluester');
+    expect(jenkinsfile).toContain('docker inspect "$migration_db_container" || true');
+    expect(jenkinsfile).toContain('Retrying postgres migration smoke container startup...');
     expect(jenkinsfile).toContain('--network "container:$migration_db_container"');
     expect(jenkinsfile).toContain('@127.0.0.1:5432/dorfgefluester');
     expect(jenkinsfile).toContain("sh -lc 'node scripts/quality/api-migration-smoke.cjs'");

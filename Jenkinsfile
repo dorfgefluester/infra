@@ -181,6 +181,7 @@ pipeline {
                         sh '''
                             migration_db_container="dorfgefluester-migration-smoke-${BUILD_NUMBER}"
                             migration_db_network="dorfgefluester-migration-smoke-net-${BUILD_NUMBER}"
+                            migration_db_image="docker.io/pgvector/pgvector:0.8.2-pg16"
                             cleanup() {
                               status=$?
                               if [ "$status" != "0" ]; then
@@ -196,27 +197,48 @@ pipeline {
                             trap cleanup EXIT
                             docker rm -f "$migration_db_container" >/dev/null 2>&1 || true
                             docker network rm "$migration_db_network" >/dev/null 2>&1 || true
-                            docker run -d --rm \
-                              --name "$migration_db_container" \
-                              -e POSTGRES_DB=dorfgefluester \
-                              -e POSTGRES_USER=dorfgefluester \
-                              -e POSTGRES_PASSWORD=dorfgefluester-ci \
-                              docker.io/pgvector/pgvector:pg16 >/dev/null
                             ready=0
-                            for _ in $(seq 1 90); do
-                              if ! docker ps --format '{{.Names}}' | grep -Fx "$migration_db_container" >/dev/null 2>&1; then
-                                echo "ERROR: postgres migration smoke container exited before readiness."
-                                docker ps -a --filter "name=$migration_db_container" || true
-                                docker logs "$migration_db_container" || true
-                                exit 1
+                            for start_attempt in $(seq 1 3); do
+                              docker rm -f "$migration_db_container" >/dev/null 2>&1 || true
+                              if ! docker run -d \
+                                --name "$migration_db_container" \
+                                -e POSTGRES_DB=dorfgefluester \
+                                -e POSTGRES_USER=dorfgefluester \
+                                -e POSTGRES_PASSWORD=dorfgefluester-ci \
+                                "$migration_db_image" >/dev/null; then
+                                echo "WARNING: failed to start postgres migration smoke container on attempt $start_attempt/3."
+                                if [ "$start_attempt" = "3" ]; then
+                                  exit 1
+                                fi
+                                sleep 2
+                                continue
                               fi
-                              if docker exec "$migration_db_container" \
-                                pg_isready -h 127.0.0.1 -U dorfgefluester -d dorfgefluester \
-                                >/dev/null 2>&1; then
-                                ready=1
+
+                              for _ in $(seq 1 90); do
+                                if ! docker ps --format '{{.Names}}' | grep -Fx "$migration_db_container" >/dev/null 2>&1; then
+                                  echo "WARNING: postgres migration smoke container exited before readiness on attempt $start_attempt/3."
+                                  docker ps -a --filter "name=$migration_db_container" || true
+                                  docker logs "$migration_db_container" || true
+                                  docker inspect "$migration_db_container" || true
+                                  break
+                                fi
+                                if docker exec "$migration_db_container" \
+                                  pg_isready -h 127.0.0.1 -U dorfgefluester -d dorfgefluester \
+                                  >/dev/null 2>&1; then
+                                  ready=1
+                                  break
+                                fi
+                                sleep 2
+                              done
+
+                              if [ "$ready" = "1" ]; then
                                 break
                               fi
-                              sleep 2
+
+                              if [ "$start_attempt" != "3" ]; then
+                                echo "Retrying postgres migration smoke container startup..."
+                                sleep 2
+                              fi
                             done
                             if [ "$ready" != "1" ]; then
                               docker logs "$migration_db_container" || true
