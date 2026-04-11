@@ -137,6 +137,17 @@ describe('API server', () => {
           world: { currentMapId: 'city-square', virtualPosition: { x: 10, y: 20 } },
           systems: {
             time: { currentHour: 8, currentMinute: 15, day: 2, timeScale: 250 },
+            visitedPlaces: {
+              places: {
+                npc_baker: { id: 'npc_baker', name: 'Baecker Hans', firstVisitedAt: 1000 },
+                village_board: { id: 'village_board', name: 'Village Board', firstVisitedAt: 2000 },
+              },
+            },
+            achievements: {
+              unlocked: {
+                first_steps: { unlockedAt: 3000, trigger: 'visited-place-recorded' },
+              },
+            },
             inventory: { items: { apple: 2, bread: 1 } },
             quests: {
               activeQuests: [['fetch_flour', { progress: 50 }]],
@@ -164,6 +175,8 @@ describe('API server', () => {
             quests: 1,
             completedQuests: 1,
             inventoryItems: 3,
+            visitedPlaces: 2,
+            achievementCount: 1,
           }),
           payload: expect.objectContaining({
             player: { x: 10, y: 20 },
@@ -171,6 +184,16 @@ describe('API server', () => {
             world: expect.objectContaining({ currentMapId: 'city-square' }),
             systems: expect.objectContaining({
               time: { currentHour: 8, currentMinute: 15, day: 2, timeScale: 250 },
+              visitedPlaces: expect.objectContaining({
+                places: expect.objectContaining({
+                  npc_baker: expect.objectContaining({ name: 'Baecker Hans' }),
+                }),
+              }),
+              achievements: {
+                unlocked: {
+                  first_steps: { unlockedAt: 3000, trigger: 'visited-place-recorded' },
+                },
+              },
               inventory: { items: { apple: 2, bread: 1 } },
             }),
           }),
