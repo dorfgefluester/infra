@@ -133,9 +133,10 @@ describe('API server', () => {
           name: 'Cloud Slot 1',
           preview: { location: 'Village', quests: 2 },
           player: { x: 10, y: 20 },
-          time: { hour: 8, minute: 15, day: 2 },
+          time: { hour: 8, minute: 15, currentHour: 8, currentMinute: 15, day: 2, timeScale: 250 },
           world: { currentMapId: 'city-square', virtualPosition: { x: 10, y: 20 } },
           systems: {
+            time: { currentHour: 8, currentMinute: 15, day: 2, timeScale: 250 },
             inventory: { items: { apple: 2, bread: 1 } },
             quests: {
               activeQuests: [['fetch_flour', { progress: 50 }]],
@@ -166,8 +167,10 @@ describe('API server', () => {
           }),
           payload: expect.objectContaining({
             player: { x: 10, y: 20 },
+            time: expect.objectContaining({ currentHour: 8, currentMinute: 15, timeScale: 250 }),
             world: expect.objectContaining({ currentMapId: 'city-square' }),
             systems: expect.objectContaining({
+              time: { currentHour: 8, currentMinute: 15, day: 2, timeScale: 250 },
               inventory: { items: { apple: 2, bread: 1 } },
             }),
           }),
