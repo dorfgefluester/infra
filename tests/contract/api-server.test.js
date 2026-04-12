@@ -148,6 +148,12 @@ describe('API server', () => {
                 first_steps: { unlockedAt: 3000, trigger: 'visited-place-recorded' },
               },
             },
+            playerStats: {
+              totalPlayTimeSeconds: 900,
+              sessionCount: 6,
+              distanceTravelled: 2400,
+              npcsMetCount: 5,
+            },
             inventory: { items: { apple: 2, bread: 1 } },
             quests: {
               activeQuests: [['fetch_flour', { progress: 50 }]],
@@ -175,6 +181,10 @@ describe('API server', () => {
             quests: 1,
             completedQuests: 1,
             inventoryItems: 3,
+            playTimeSeconds: 900,
+            sessionCount: 6,
+            npcsMetCount: 5,
+            distanceTravelled: 2400,
             visitedPlaces: 2,
             achievementCount: 1,
           }),
@@ -193,6 +203,12 @@ describe('API server', () => {
                 unlocked: {
                   first_steps: { unlockedAt: 3000, trigger: 'visited-place-recorded' },
                 },
+              },
+              playerStats: {
+                totalPlayTimeSeconds: 900,
+                sessionCount: 6,
+                distanceTravelled: 2400,
+                npcsMetCount: 5,
               },
               inventory: { items: { apple: 2, bread: 1 } },
             }),
