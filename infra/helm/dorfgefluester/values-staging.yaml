@@ -4,14 +4,14 @@ deploymentMode: monolith
 web:
   image:
     repository: dev-env-01:5000/dorfgefluester
-    tag: 5093d38
-    pullPolicy: IfNotPresent
+    tag: master-latest
+    pullPolicy: Always
 
 api:
   image:
     repository: dev-env-01:5000/dorfgefluester-api
-    tag: 5093d38
-    pullPolicy: IfNotPresent
+    tag: master-latest
+    pullPolicy: Always
   env:
     appOrigin: http://dev-env-01
 

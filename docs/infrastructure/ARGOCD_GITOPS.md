@@ -153,7 +153,7 @@ argocd app diff dorfgefluester-staging
 Run the first manual sync only after the diff looks correct:
 
 ```bash
-argocd app sync dorfgefluester-staging
+argocd app sync dorfgefluester-staging --force
 argocd app wait dorfgefluester-staging --health --sync
 ```
 
@@ -167,6 +167,7 @@ sudo k3s kubectl -n dorfgefluester get ingress
 curl -I http://dev-env-01/dorfgefluester/
 curl -fsS http://dev-env-01/dorfgefluester/healthz
 curl -fsS http://dev-env-01/api/health
+curl -fsS http://dev-env-01/dorfgefluester/api/health
 ```
 
 If a rollout is unhealthy:
@@ -184,7 +185,7 @@ After Argo-managed staging has succeeded once:
 
 1. Stop using `jenkins/dorfgefluester-staging-deploy.Jenkinsfile` for deployments.
 2. Keep Jenkins CI for build/test/push only.
-3. Update `infra/helm/dorfgefluester/values-staging.yaml` in Git with immutable image tags from Jenkins.
-4. Review the Argo diff and sync manually.
+3. Confirm Jenkins has pushed fresh `master-latest` images for both `dorfgefluester` and `dorfgefluester-api`.
+4. Review the Argo diff and run a manual force sync so staging recreates pods against the refreshed `master-latest` images.
 
 Do not delete the old deploy pipeline until the first successful Argo-managed staging rollout is verified.

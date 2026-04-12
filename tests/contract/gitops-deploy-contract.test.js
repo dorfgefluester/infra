@@ -16,8 +16,8 @@ describe('gitops deploy contract', () => {
     expect(readRepoFile('infra/helm/dorfgefluester/values-staging.yaml')).toContain('namespace: dorfgefluester');
     expect(readRepoFile('infra/helm/dorfgefluester/values-staging.yaml')).toContain('deploymentMode: monolith');
     expect(readRepoFile('infra/helm/dorfgefluester/values-staging.yaml')).toContain('enabled: true');
-    expect(readRepoFile('infra/helm/dorfgefluester/values-staging.yaml')).toMatch(/tag: [0-9a-f]{7}/);
-    expect(readRepoFile('infra/helm/dorfgefluester/values-staging.yaml')).toContain('pullPolicy: IfNotPresent');
+    expect(readRepoFile('infra/helm/dorfgefluester/values-staging.yaml')).toContain('tag: master-latest');
+    expect(readRepoFile('infra/helm/dorfgefluester/values-staging.yaml')).toContain('pullPolicy: Always');
     expect(readRepoFile('infra/helm/dorfgefluester/values-production.yaml')).toContain('namespace: production');
   });
 
@@ -40,6 +40,8 @@ describe('gitops deploy contract', () => {
     expect(monolithDeployment).toContain('{{- if eq .Values.deploymentMode "monolith" }}');
     expect(monolithService).toContain('{{- if eq .Values.deploymentMode "monolith" }}');
     expect(monolithNginxConfig).toContain('proxy_pass http://127.0.0.1:3001/api/;');
+    expect(monolithNginxConfig).toContain('location /dorfgefluester/api/');
+    expect(monolithNginxConfig).toContain('rewrite ^/dorfgefluester/api/(.*)$ /api/$1 break;');
     expect(apiDeployment).toContain('name: {{ include "dorfgefluester.apiName" . }}');
     expect(apiDeployment).toContain('{{- if ne .Values.deploymentMode "monolith" }}');
     expect(apiDeployment).toContain('name: {{ .Values.api.runtimeSecret.name | quote }}');
