@@ -50,4 +50,13 @@ describe('staging deploy contracts', () => {
     expect(jenkinsfile).toContain('if (changedPath != deployPipelinePath)');
     expect(jenkinsfile).toContain('echo "Skipping build: only ${deployPipelinePath} changed."');
   });
+
+  test('main Jenkinsfile times out stuck direct image pushes before falling back', () => {
+    const jenkinsfile = readRepoFile('Jenkinsfile');
+
+    expect(jenkinsfile).toContain("def directPushTimeoutMinutes = 4");
+    expect(jenkinsfile).toContain("timeout(time: directPushTimeoutMinutes, unit: 'MINUTES')");
+    expect(jenkinsfile).toContain('echo "Timed out pushing ${repo}:${tag} directly from Jenkins agent after ${directPushTimeoutMinutes} minutes."');
+    expect(jenkinsfile).toContain('echo "Direct push failed for ${repo}. Trying skopeo HTTP push."');
+  });
 });

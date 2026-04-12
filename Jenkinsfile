@@ -1302,6 +1302,7 @@ exit 0
                             extraTags = extraTags.findAll { it?.trim() }.unique()
                             def tagsToPush = ([imageTag] + extraTags).unique()
                             def imageRepos = [env.IMAGE_REPO, env.API_IMAGE_REPO]
+                            def directPushTimeoutMinutes = 4
 
                             def pushRepo = { String repo ->
                                 for (def tag : extraTags) {
@@ -1309,14 +1310,21 @@ exit 0
                                 }
 
                                 def pushDirectAll = {
-                                    def ok = true
                                     for (def tag : tagsToPush) {
-                                        def status = sh(script: "docker push ${repo}:${tag}", returnStatus: true)
+                                        def status = null
+                                        try {
+                                            timeout(time: directPushTimeoutMinutes, unit: 'MINUTES') {
+                                                status = sh(script: "docker push ${repo}:${tag}", returnStatus: true)
+                                            }
+                                        } catch (org.jenkinsci.plugins.workflow.steps.FlowInterruptedException interrupted) {
+                                            echo "Timed out pushing ${repo}:${tag} directly from Jenkins agent after ${directPushTimeoutMinutes} minutes."
+                                            return false
+                                        }
                                         if (status != 0) {
-                                            ok = false
+                                            return false
                                         }
                                     }
-                                    return ok
+                                    return true
                                 }
 
                                 def pushSkopeoAll = {
