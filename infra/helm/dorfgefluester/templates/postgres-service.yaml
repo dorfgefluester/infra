@@ -7,8 +7,7 @@ metadata:
     {{- include "dorfgefluester.labels" . | nindent 4 }}
 spec:
   selector:
-    {{- include "dorfgefluester.selectorLabels" . | nindent 4 }}
-    app.kubernetes.io/component: postgres
+    {{- include "dorfgefluester.postgresSelectorLabels" . | nindent 4 }}
   ports:
     - port: {{ .Values.postgres.service.port }}
       targetPort: {{ .Values.postgres.containerPort }}

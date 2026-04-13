@@ -26,6 +26,36 @@ app.kubernetes.io/name: {{ include "dorfgefluester.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
 
+{{- define "dorfgefluester.monolithSelectorLabels" -}}
+{{ include "dorfgefluester.selectorLabels" . }}
+app.kubernetes.io/component: monolith
+{{- end -}}
+
+{{- define "dorfgefluester.webSelectorLabels" -}}
+{{ include "dorfgefluester.selectorLabels" . }}
+app.kubernetes.io/component: web
+{{- end -}}
+
+{{- define "dorfgefluester.apiSelectorLabels" -}}
+{{ include "dorfgefluester.selectorLabels" . }}
+app.kubernetes.io/component: api
+{{- end -}}
+
+{{- define "dorfgefluester.redisSelectorLabels" -}}
+{{ include "dorfgefluester.selectorLabels" . }}
+app.kubernetes.io/component: redis
+{{- end -}}
+
+{{- define "dorfgefluester.workerSelectorLabels" -}}
+{{ include "dorfgefluester.selectorLabels" . }}
+app.kubernetes.io/component: worker
+{{- end -}}
+
+{{- define "dorfgefluester.postgresSelectorLabels" -}}
+{{ include "dorfgefluester.selectorLabels" . }}
+app.kubernetes.io/component: postgres
+{{- end -}}
+
 {{- define "dorfgefluester.webName" -}}
 {{- if eq .Values.deploymentMode "monolith" -}}
 {{- include "dorfgefluester.fullname" . -}}

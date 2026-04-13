@@ -9,13 +9,11 @@ spec:
   replicas: 1
   selector:
     matchLabels:
-      {{- include "dorfgefluester.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: redis
+      {{- include "dorfgefluester.redisSelectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "dorfgefluester.selectorLabels" . | nindent 8 }}
-        app.kubernetes.io/component: redis
+        {{- include "dorfgefluester.redisSelectorLabels" . | nindent 8 }}
     spec:
       automountServiceAccountToken: false
       containers:

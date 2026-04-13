@@ -9,11 +9,11 @@ spec:
   replicas: {{ .Values.web.replicaCount }}
   selector:
     matchLabels:
-      {{- include "dorfgefluester.selectorLabels" . | nindent 6 }}
+      {{- include "dorfgefluester.monolithSelectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "dorfgefluester.selectorLabels" . | nindent 8 }}
+        {{- include "dorfgefluester.monolithSelectorLabels" . | nindent 8 }}
       {{- if .Values.rolloutNonce }}
       annotations:
         dorfgefluester/rollout-nonce: {{ .Values.rolloutNonce | quote }}

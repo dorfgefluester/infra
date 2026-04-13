@@ -10,13 +10,11 @@ spec:
   replicas: {{ .Values.postgres.replicaCount }}
   selector:
     matchLabels:
-      {{- include "dorfgefluester.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: postgres
+      {{- include "dorfgefluester.postgresSelectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "dorfgefluester.selectorLabels" . | nindent 8 }}
-        app.kubernetes.io/component: postgres
+        {{- include "dorfgefluester.postgresSelectorLabels" . | nindent 8 }}
     spec:
       automountServiceAccountToken: false
       securityContext:

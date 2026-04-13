@@ -9,13 +9,11 @@ spec:
   replicas: {{ .Values.api.replicaCount }}
   selector:
     matchLabels:
-      {{- include "dorfgefluester.selectorLabels" . | nindent 6 }}
-      app.kubernetes.io/component: api
+      {{- include "dorfgefluester.apiSelectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "dorfgefluester.selectorLabels" . | nindent 8 }}
-        app.kubernetes.io/component: api
+        {{- include "dorfgefluester.apiSelectorLabels" . | nindent 8 }}
       {{- if .Values.rolloutNonce }}
       annotations:
         dorfgefluester/rollout-nonce: {{ .Values.rolloutNonce | quote }}

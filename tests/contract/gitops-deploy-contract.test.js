@@ -39,13 +39,17 @@ describe('gitops deploy contract', () => {
 
     expect(monolithDeployment).toContain('{{- if eq .Values.deploymentMode "monolith" }}');
     expect(monolithService).toContain('{{- if eq .Values.deploymentMode "monolith" }}');
+    expect(monolithDeployment).toContain('{{- include "dorfgefluester.monolithSelectorLabels" . | nindent 6 }}');
+    expect(monolithService).toContain('{{- include "dorfgefluester.monolithSelectorLabels" . | nindent 4 }}');
     expect(monolithNginxConfig).toContain('proxy_pass http://127.0.0.1:3001/api/;');
     expect(monolithNginxConfig).toContain('location /dorfgefluester/api/');
     expect(monolithNginxConfig).toContain('rewrite ^/dorfgefluester/api/(.*)$ /api/$1 break;');
     expect(apiDeployment).toContain('name: {{ include "dorfgefluester.apiName" . }}');
+    expect(apiDeployment).toContain('{{- include "dorfgefluester.apiSelectorLabels" . | nindent 6 }}');
     expect(apiDeployment).toContain('{{- if ne .Values.deploymentMode "monolith" }}');
     expect(apiDeployment).toContain('name: {{ .Values.api.runtimeSecret.name | quote }}');
     expect(webDeployment).toContain('name: {{ include "dorfgefluester.webName" . }}');
+    expect(webDeployment).toContain('{{- include "dorfgefluester.webSelectorLabels" . | nindent 6 }}');
     expect(webDeployment).toContain('{{- if ne .Values.deploymentMode "monolith" }}');
     expect(ingress).toContain('name: {{ include "dorfgefluester.fullname" . }}');
     expect(fs.existsSync(path.join(rootDir, 'infra/infra/helm/dorfgefluester/templates/postgres-secret.yaml'))).toBe(false);
