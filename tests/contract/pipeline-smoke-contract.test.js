@@ -100,7 +100,10 @@ describe('pipeline smoke contracts', () => {
     const jenkinsfile = readRepoFile('Jenkinsfile');
 
     expect(jenkinsfile).toContain("buildDiscarder(logRotator(daysToKeepStr: '7', numToKeepStr: '10', artifactDaysToKeepStr: '7', artifactNumToKeepStr: '5'))");
-    expect(jenkinsfile).toContain('find "$CACHE_ROOT" -mindepth 1 -maxdepth 1 -type d ! -path "$JOB_CACHE_DIR" -mtime +7 -print');
+    expect(jenkinsfile).toContain('find "$CACHE_ROOT" -type f -name \'.last-used\' -mtime +7 -print');
+    expect(jenkinsfile).toContain('[ "$stale_dir" = "$JOB_CACHE_DIR" ] && continue');
+    expect(jenkinsfile).toContain('docker run --rm -v "$CACHE_ROOT:/cache-root" alpine:3.20 sh -lc');
+    expect(jenkinsfile).toContain('find "$CACHE_ROOT" -depth -type d -empty -delete || true');
     expect(jenkinsfile).toContain('cleanWs(deleteDirs: true, disableDeferredWipeout: true, notFailBuild: true)');
   });
 
