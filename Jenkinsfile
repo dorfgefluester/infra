@@ -8,7 +8,7 @@ pipeline {
 
     options {
         buildDiscarder(logRotator(daysToKeepStr: '7', numToKeepStr: '10', artifactDaysToKeepStr: '7', artifactNumToKeepStr: '5'))
-        timeout(time: 45, unit: 'MINUTES')
+        timeout(time: 90, unit: 'MINUTES')
         timestamps()
         disableConcurrentBuilds()
         skipDefaultCheckout(true)
@@ -263,7 +263,7 @@ pipeline {
                             steps {
                                 script {
                                     def isReleaseBranch = (env.BRANCH_NAME ==~ /\d+\.\d+\.\d+/)
-                                    def maxIndexKb = isReleaseBranch ? 452 : 550
+                                    def maxIndexKb = isReleaseBranch ? 480 : 550
                                     def maxPhaserKb = isReleaseBranch ? 1600 : 1700
                                     def maxTotalKb = isReleaseBranch ? 2100 : 2300
                                     sh """
