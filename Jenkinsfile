@@ -1492,10 +1492,19 @@ exit 0
                 set +e
                 mkdir -p "$CACHE_ROOT"
                 touch "$JOB_CACHE_TOUCH_FILE"
-                find "$CACHE_ROOT" -mindepth 1 -maxdepth 1 -type d ! -path "$JOB_CACHE_DIR" -mtime +7 -print | while read -r stale_dir; do
+                find "$CACHE_ROOT" -type f -name '.last-used' -mtime +7 -print | while read -r touch_file; do
+                  stale_dir="$(dirname "$touch_file")"
                   [ -n "$stale_dir" ] || continue
-                  rm -rf "$stale_dir" || true
+                  [ "$stale_dir" = "$JOB_CACHE_DIR" ] && continue
+                  rm -rf "$stale_dir" || docker run --rm -v "$CACHE_ROOT:/cache-root" alpine:3.20 sh -lc '
+                    target="$1"
+                    case "$target" in
+                      /cache-root/*) rm -rf "$target" ;;
+                      *) exit 1 ;;
+                    esac
+                  ' sh "/cache-root${stale_dir#"$CACHE_ROOT"}" || true
                 done
+                find "$CACHE_ROOT" -depth -type d -empty -delete || true
             '''
             cleanWs(deleteDirs: true, disableDeferredWipeout: true, notFailBuild: true)
         }
