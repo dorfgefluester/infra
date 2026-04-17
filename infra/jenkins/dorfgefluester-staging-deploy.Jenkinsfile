@@ -201,6 +201,9 @@ pipeline {
                   \$K3S_CMD kubectl -n ${K8S_NAMESPACE} label "\$name" \
                     "app.kubernetes.io/managed-by=Helm" \
                     --overwrite 2>/dev/null || true
+                  \$K3S_CMD kubectl -n ${K8S_NAMESPACE} patch "\$name" \
+                    --type=json -p='[{"op":"remove","path":"/metadata/managedFields"}]' \
+                    2>/dev/null || true
                 done
               done
               HELM_FLAGS="--kubeconfig /etc/rancher/k3s/k3s.yaml"
