@@ -1,0 +1,82 @@
+# Dependencies
+node_modules/
+yarn.lock
+
+# Build output
+dist/
+build/
+out/
+.next/
+.next-staging/
+
+# Environment variables and secrets
+.env
+.env.*
+.envrc
+.direnv/
+.npmrc
+.claude/settings.local.json
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+*.jks
+*.kubeconfig
+*.ovpn
+credentials.*
+secrets.*
+
+# Logs
+logs/*.log
+logs/*.txt
+src/logs/
+*.log
+npm-debug.log*
+game-log-*.txt
+
+# Editor directories
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+.cache/
+.turbo/
+.parcel-cache/
+.vercel/
+*.tmp
+*.bak
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Local report snapshots (SonarQube/Trivy/etc.)
+reports/
+.scannerwork/
+.sonar/
+report-task.txt
+sonar-report.json
+
+# Test artifacts
+tests/coverage/
+coverage/
+.nyc_output/
+playwright-report/
+tests/test-results/
+tests/junit/
+*.spec.js-snapshots/
+
+# Jenkins logs
+tests/jenkins-builds/
+tests/jenkins/

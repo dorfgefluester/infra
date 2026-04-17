@@ -1,0 +1,38 @@
+{
+  "name": "dorfgefluester-infra",
+  "version": "0.1.0",
+  "description": "Dorfgeflüster — Helm, ArgoCD, Nginx, Jenkins, infrastructure",
+  "type": "module",
+  "scripts": {
+    "test": "jest",
+    "test:coverage": "jest --coverage",
+    "quality:trivy": "node scripts/quality/trivy-fs-scan.cjs",
+    "quality:sonar": "node scripts/quality/sonarqube-export.cjs",
+    "quality:sonar:report": "node scripts/quality/sonar-report.cjs",
+    "quality:sonar:plan": "node scripts/quality/sonar-plan-export.cjs",
+    "quality:pull": "node scripts/quality/pull-findings.cjs",
+    "quality-check": "node scripts/quality/run-skill-gate.cjs --mode local",
+    "build-skills": "node scripts/build-skills.cjs",
+    "hooks:install": "node scripts/setup/install-git-hooks.cjs"
+  },
+  "keywords": ["helm", "k3s", "jenkins", "argocd", "infrastructure"],
+  "author": "",
+  "license": "MIT",
+  "overrides": {
+    "brace-expansion": "^2.0.3",
+    "minimatch": "^9.0.7",
+    "picomatch": "^4.0.4",
+    "test-exclude": {
+      "minimatch": "^3.1.4"
+    }
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@babel/core": "^7.29.0",
+    "@babel/preset-env": "^7.29.2",
+    "@biomejs/biome": "^2.4.8",
+    "@jest/globals": "^30.3.0",
+    "babel-jest": "^30.3.0",
+    "jest": "^30.3.0"
+  }
+}
