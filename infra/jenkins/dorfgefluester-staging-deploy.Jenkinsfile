@@ -13,7 +13,7 @@ pipeline {
     string(name: 'BRANCH', defaultValue: 'master', description: 'Source branch for this deploy (informational)')
     string(name: 'APP_HOST', defaultValue: 'dev-env-01', description: 'Ingress host for staging (optional)')
     string(name: 'APP_PATH', defaultValue: '/dorfgefluester', description: 'Ingress path prefix for staging')
-    string(name: 'CHART_PATH', defaultValue: 'helm/dorfgefluester', description: 'Path to Helm chart in this repo')
+    string(name: 'CHART_PATH', defaultValue: 'infra/helm/dorfgefluester', description: 'Path to Helm chart in this repo')
   booleanParam(name: 'RUN_SYNTHETICS', defaultValue: true, description: 'Run Playwright synthetic browser checks against deployed staging')
   booleanParam(name: 'RUN_SIGNOZ_GATE', defaultValue: false, description: 'Query SigNoz runtime metrics after staging deploy')
   string(name: 'SIGNOZ_BASE_URL', defaultValue: 'http://signoz:8080', description: 'Base URL for the SigNoz instance')
