@@ -106,37 +106,32 @@ pipeline {
 
     stage('Verify IMAGE_TAG Exists In Registry') {
       steps {
-        withCredentials([sshUserPrivateKey(credentialsId: env.SSH_CRED_ID, keyFileVariable: 'SSH_KEY')]) {
-          sh """
-            set -e
+        sh """
+          set -e
+          for image in ${WEB_IMAGE_NAME} ${API_IMAGE_NAME}; do
+            url="http://${REGISTRY_HOST}/v2/\${image}/tags/list"
             attempts=30
             sleep_secs=20
+            found=0
             for i in \$(seq 1 \$attempts); do
-              if ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} "
-                set -eu
-                for image in ${WEB_IMAGE_NAME} ${API_IMAGE_NAME}; do
-                  url='http://${REGISTRY_HOST}/v2/'\\\"\$image\\\"'/tags/list'
-                  if ! tags_json=\\\$(curl -fsS \\\"\\\$url\\\"); then
-                    echo \\\"ERROR: unable to query registry tags at \\\$url\\\" >&2
-                    exit 2
-                  fi
-                  echo \\\"\\\$tags_json\\\" | grep -q '\\\"${IMAGE_TAG}\\\"' || exit 1
-                done
-              "; then
-                echo "OK: image tag ${IMAGE_TAG} exists in ${WEB_IMAGE_REPO} and ${API_IMAGE_REPO}"
-                exit 0
+              if tags_json=\$(curl -fsS "\$url" 2>/dev/null); then
+                if echo "\$tags_json" | grep -q '"${IMAGE_TAG}"'; then
+                  echo "OK: tag ${IMAGE_TAG} found in \$image"
+                  found=1
+                  break
+                fi
               fi
-              echo "Tag ${IMAGE_TAG} not found yet in ${WEB_IMAGE_REPO}/${API_IMAGE_REPO} (attempt \$i/\$attempts)."
-              if [ "\$i" -lt "\$attempts" ]; then
-                sleep "\$sleep_secs"
-              fi
+              echo "Tag ${IMAGE_TAG} not found in \$image (attempt \$i/\$attempts)."
+              if [ "\$i" -lt "\$attempts" ]; then sleep "\$sleep_secs"; fi
             done
-            echo "Available tags (registry response):"
-            ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no ${DEPLOY_USER}@${DEPLOY_HOST} "for image in ${WEB_IMAGE_NAME} ${API_IMAGE_NAME}; do echo == \$image ==; curl -fsS 'http://${REGISTRY_HOST}/v2/'\"\$image\"'/tags/list' || true; done"
-            echo "ERROR: image tag ${IMAGE_TAG} not found in both registry repositories after waiting."
-            exit 1
-          """
-        }
+            if [ "\$found" = "0" ]; then
+              echo "Available tags for \$image:"; curl -fsS "\$url" || true
+              echo "ERROR: image tag ${IMAGE_TAG} not found in \$image after waiting."
+              exit 1
+            fi
+          done
+          echo "OK: image tag ${IMAGE_TAG} verified in ${WEB_IMAGE_REPO} and ${API_IMAGE_REPO}"
+        """
       }
     }
 
