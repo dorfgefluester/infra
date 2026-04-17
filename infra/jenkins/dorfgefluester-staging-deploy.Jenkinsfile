@@ -191,6 +191,11 @@ pipeline {
                   --from-literal=postgres-user=dorfgefluester \
                   --from-literal=postgres-password=dorfgefluester-staging
               fi
+              # Remove ArgoCD Application if present to prevent re-ownership of resources
+              if \$K3S_CMD kubectl get crd applications.argoproj.io >/dev/null 2>&1; then
+                \$K3S_CMD kubectl -n argocd delete application ${APP_NAME} 2>/dev/null || true
+                echo "INFO: deleted ArgoCD application ${APP_NAME} (if it existed)."
+              fi
               # Clean up any failed/pending Helm release so upgrade can proceed
               if [ "\$HELM_MODE" = "direct" ]; then
                 HELM_STATUS=\$("\$HELM_BIN" --kubeconfig /etc/rancher/k3s/k3s.yaml status ${APP_NAME} -n ${K8S_NAMESPACE} 2>/dev/null | grep -m1 STATUS | awk '{print \$2}' || true)
@@ -205,6 +210,10 @@ pipeline {
                   sudo -n sh -lc "\"\$HELM_BIN\" --kubeconfig /etc/rancher/k3s/k3s.yaml uninstall ${APP_NAME} -n ${K8S_NAMESPACE} --no-hooks" 2>/dev/null || true
                 fi
               fi
+              # Delete resources with argocd-controller field manager conflicts before Helm install
+              echo "INFO: removing resources with argocd-controller field manager conflicts."
+              \$K3S_CMD kubectl -n ${K8S_NAMESPACE} delete deployment/${APP_NAME} 2>/dev/null || true
+              \$K3S_CMD kubectl -n ${K8S_NAMESPACE} delete statefulset/${APP_NAME}-postgres 2>/dev/null || true
               echo "INFO: adopting existing resources into Helm (idempotent)."
               for resource_type in configmap deployment statefulset service ingress serviceaccount; do
                 for name in \$(\$K3S_CMD kubectl -n ${K8S_NAMESPACE} get "\$resource_type" -o name 2>/dev/null | grep "dorfgefluester"); do
@@ -228,7 +237,7 @@ pipeline {
               if [ -n "${APP_PATH}" ]; then
                 HELM_SET_ARGS="\$HELM_SET_ARGS --set ingress.path=${APP_PATH}"
               fi
-              HELM_SUBCMD="upgrade --install --server-side --force-conflicts ${APP_NAME} /tmp/dorfgefluester-chart -n ${K8S_NAMESPACE} -f /tmp/dorfgefluester-chart/values.yaml -f /tmp/dorfgefluester-chart/values-staging.yaml \$HELM_SET_ARGS"
+              HELM_SUBCMD="upgrade --install ${APP_NAME} /tmp/dorfgefluester-chart -n ${K8S_NAMESPACE} -f /tmp/dorfgefluester-chart/values.yaml -f /tmp/dorfgefluester-chart/values-staging.yaml \$HELM_SET_ARGS"
               if [ -n "${ROLLOUT_NONCE}" ]; then
                 HELM_SUBCMD="\$HELM_SUBCMD --set-string rolloutNonce=${ROLLOUT_NONCE}"
               fi
