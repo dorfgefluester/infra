@@ -648,7 +648,7 @@ pipeline {
                 -v "${env.WORKSPACE}:/zap/wrk" \
                 ghcr.io/zaproxy/zaproxy:stable \
                 zap-baseline.py -t "${targetUrl}" \
-                  -c jenkins/zap-baseline-int.conf \
+                  -c infra/jenkins/zap-baseline-int.conf \
                   -r reports/zap/zap-baseline.html \
                   -w reports/zap/zap-baseline.md \
                   -x reports/zap/zap-baseline.xml \
