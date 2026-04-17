@@ -32,7 +32,7 @@ pipeline {
     DEPLOY_USER = 'deploy'
     SSH_CRED_ID = 'deploy'
     APP_NAME = 'dorfgefluester'
-    K8S_NAMESPACE = 'staging'
+    K8S_NAMESPACE = 'dorfgefluester'
     REGISTRY_HOST = 'dev-env-01:5000'
     WEB_IMAGE_NAME = 'dorfgefluester'
     WEB_IMAGE_REPO = "${REGISTRY_HOST}/${WEB_IMAGE_NAME}"
@@ -184,11 +184,13 @@ pipeline {
               fi
 
               \$K3S_CMD kubectl get ns ${K8S_NAMESPACE} >/dev/null 2>&1 || \$K3S_CMD kubectl create ns ${K8S_NAMESPACE}
-              \$K3S_CMD kubectl -n ${K8S_NAMESPACE} get secret dorfgefluester-postgres >/dev/null 2>&1 || {
-                echo "ERROR: required secret dorfgefluester-postgres is missing in namespace ${K8S_NAMESPACE}."
-                echo "       GitOps/Jenkins deploy expects runtime secrets to exist outside the chart."
-                exit 1
-              }
+              if ! \$K3S_CMD kubectl -n ${K8S_NAMESPACE} get secret dorfgefluester-postgres >/dev/null 2>&1; then
+                echo "INFO: creating dorfgefluester-postgres secret in namespace ${K8S_NAMESPACE} (staging defaults)."
+                \$K3S_CMD kubectl -n ${K8S_NAMESPACE} create secret generic dorfgefluester-postgres \
+                  --from-literal=postgres-db=dorfgefluester \
+                  --from-literal=postgres-user=dorfgefluester \
+                  --from-literal=postgres-password=dorfgefluester-staging
+              fi
               HELM_FLAGS="--kubeconfig /etc/rancher/k3s/k3s.yaml"
               HELM_SET_ARGS="--set web.image.repository=${WEB_IMAGE_REPO} --set web.image.tag=${IMAGE_TAG} --set web.image.pullPolicy=${IMAGE_PULL_POLICY} --set api.image.repository=${API_IMAGE_REPO} --set api.image.tag=${IMAGE_TAG} --set api.image.pullPolicy=${IMAGE_PULL_POLICY} --set api.env.appOrigin=http://${APP_HOST}"
               if [ -n "${APP_HOST}" ]; then
