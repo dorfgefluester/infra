@@ -191,6 +191,18 @@ pipeline {
                   --from-literal=postgres-user=dorfgefluester \
                   --from-literal=postgres-password=dorfgefluester-staging
               fi
+              echo "INFO: adopting existing resources into Helm (idempotent)."
+              for resource_type in configmap deployment statefulset service ingress serviceaccount; do
+                for name in \$(\$K3S_CMD kubectl -n ${K8S_NAMESPACE} get "\$resource_type" -o name 2>/dev/null | grep "dorfgefluester"); do
+                  \$K3S_CMD kubectl -n ${K8S_NAMESPACE} annotate "\$name" \
+                    "meta.helm.sh/release-name=${APP_NAME}" \
+                    "meta.helm.sh/release-namespace=${K8S_NAMESPACE}" \
+                    --overwrite 2>/dev/null || true
+                  \$K3S_CMD kubectl -n ${K8S_NAMESPACE} label "\$name" \
+                    "app.kubernetes.io/managed-by=Helm" \
+                    --overwrite 2>/dev/null || true
+                done
+              done
               HELM_FLAGS="--kubeconfig /etc/rancher/k3s/k3s.yaml"
               HELM_SET_ARGS="--set web.image.repository=${WEB_IMAGE_REPO} --set web.image.tag=${IMAGE_TAG} --set web.image.pullPolicy=${IMAGE_PULL_POLICY} --set api.image.repository=${API_IMAGE_REPO} --set api.image.tag=${IMAGE_TAG} --set api.image.pullPolicy=${IMAGE_PULL_POLICY} --set api.env.appOrigin=http://${APP_HOST}"
               if [ -n "${APP_HOST}" ]; then
